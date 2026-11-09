@@ -103,6 +103,95 @@ public sealed class AppUninstallService
         return new AppLaunchPlan(tokens[0], tokens.Skip(1).ToList(), command, silent, app.RequiresElevation);
     }
 
+    private static readonly HashSet<string> ForbiddenLaunchers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "cmd.exe", "powershell.exe", "pwsh.exe", "mshta.exe", "wscript.exe", "cscript.exe",
+        "rundll32.exe", "regsvr32.exe", "certutil.exe", "msbuild.exe", "schtasks.exe",
+        "reg.exe", "net.exe", "sc.exe", "bash.exe", "wsl.exe", "java.exe", "python.exe"
+    };
+
+    private static readonly HashSet<string> AllowedBareSystemCommands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "msiexec.exe"
+    };
+
+    /// <summary>
+    /// §15.2 执行阶段信任边界：注册表 UninstallString / QuietUninstallString 属第三方可控输入。
+    /// 只接受本地绝对路径的 .exe（或解析到 System32 的 msiexec），拒绝 UNC、设备前缀、
+    /// 备用数据流、脚本解释器与 PATH 相对解析。BuildLaunchPlan 保持可测试，校验放在启动前。
+    /// </summary>
+    internal static bool TryResolveTrustedLaunch(string fileName, out string resolved, out string reason)
+    {
+        resolved = string.Empty;
+        reason = string.Empty;
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            reason = "卸载命令为空";
+            return false;
+        }
+
+        var candidate = fileName.Trim().Trim('"');
+        if (candidate.StartsWith(@"\\", StringComparison.Ordinal) ||
+            candidate.StartsWith("//", StringComparison.Ordinal))
+        {
+            reason = "拒绝 UNC / 网络路径作为卸载目标";
+            return false;
+        }
+
+        if (!Path.IsPathRooted(candidate))
+        {
+            // 仅允许系统自带的 msiexec，且固定解析到 System32，避免当前目录 / PATH 劫持。
+            if (!AllowedBareSystemCommands.Contains(Path.GetFileName(candidate)))
+            {
+                reason = "拒绝相对路径 / PATH 解析的卸载目标";
+                return false;
+            }
+            var systemDir = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            if (string.IsNullOrWhiteSpace(systemDir))
+            {
+                reason = "无法解析系统目录";
+                return false;
+            }
+            candidate = Path.Combine(systemDir, Path.GetFileName(candidate));
+        }
+
+        string full;
+        try
+        {
+            full = Path.GetFullPath(candidate);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            reason = "卸载目标路径无法规范化";
+            return false;
+        }
+
+        if (full.Length > 2 && full.IndexOf(':', 2) >= 0)
+        {
+            reason = "拒绝备用数据流路径";
+            return false;
+        }
+        if (!string.Equals(Path.GetExtension(full), ".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            reason = "卸载目标不是可执行文件";
+            return false;
+        }
+        var leaf = Path.GetFileName(full);
+        if (ForbiddenLaunchers.Contains(leaf))
+        {
+            reason = "拒绝脚本 / 解释器类卸载目标：" + leaf;
+            return false;
+        }
+        if (!File.Exists(full))
+        {
+            reason = "卸载目标文件不存在：" + full;
+            return false;
+        }
+
+        resolved = full;
+        return true;
+    }
+
     public async Task<AppUninstallResult> UninstallAsync(InstalledApp app, bool silent, CancellationToken token)
     {
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
@@ -130,14 +219,31 @@ public sealed class AppUninstallService
                 app.UninstallCommand, null, null);
         }
 
+        if (!TryResolveTrustedLaunch(plan.FileName, out var resolved, out var trustReason))
+        {
+            RunLog.WriteException("Uninstall untrusted target", new InvalidOperationException(trustReason));
+            Log(app, silent, plan.Command, null, null, AppUninstallOutcome.LaunchFailed);
+            return new AppUninstallResult(AppUninstallOutcome.LaunchFailed, null, null,
+                plan.Command, trustReason, null);
+        }
+
+        // 仅提权分支需要 ShellExecute；非提权用 ArgumentList 逐项传参，不再拼接命令字符串。
+        var elevated = plan.RequiresElevation && !IsElevated();
         var psi = new ProcessStartInfo
         {
-            FileName = plan.FileName,
-            Arguments = WindowsCommandLine.Join(plan.Arguments),
-            UseShellExecute = true,
+            FileName = resolved,
+            UseShellExecute = elevated,
             WindowStyle = ProcessWindowStyle.Normal
         };
-        if (plan.RequiresElevation && !IsElevated()) psi.Verb = "runas";
+        if (elevated)
+        {
+            psi.Verb = "runas";
+            psi.Arguments = WindowsCommandLine.Join(plan.Arguments);
+        }
+        else
+        {
+            foreach (var argument in plan.Arguments) psi.ArgumentList.Add(argument);
+        }
 
         Process? process;
         try

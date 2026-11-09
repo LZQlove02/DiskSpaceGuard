@@ -8,8 +8,6 @@ namespace DiskSpaceGuard.Services;
 public static class RecycleBinService
 {
     private const uint FoDelete = 0x0003;
-    private const ushort FofSilent = 0x0004;
-    private const ushort FofNoConfirmation = 0x0010;
     private const ushort FofAllowUndo = 0x0040;
     private const ushort FofNoErrorUi = 0x0400;
 
@@ -33,13 +31,36 @@ public static class RecycleBinService
     public static bool TryMoveToRecycleBin(string path, out string error)
     {
         error = string.Empty;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            error = "路径为空";
+            return false;
+        }
 
-        // SHFileOperation 需要双 null 结尾的路径列表。
+        // 网络映射盘没有回收站：提前交回用户，不交给 Shell 猜测其行为。
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(path));
+            if (!string.IsNullOrEmpty(root) && new DriveInfo(root).DriveType == DriveType.Network)
+            {
+                error = "网络盘不支持回收站，已取消（未删除任何对象）";
+                return false;
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException)
+        {
+            // 卷类型无法判定时继续交给 Shell，由返回码决定成败。
+        }
+
+        // 关键安全点：绝不能带 FOF_NOCONFIRMATION / FOF_SILENT。
+        // 前者会对「无法放入回收站，是否永久删除？」自动回答「全是」，
+        // 导致 Shell 静默永久删除却返回成功并让台账误记为「可还原」。
+        // 去掉后由用户显式确认，或由 Shell 返回非零错误码交回用户。
         var operation = new SHFILEOPSTRUCT
         {
             wFunc = FoDelete,
             pFrom = path + '\0' + '\0',
-            fFlags = FofAllowUndo | FofNoConfirmation | FofSilent | FofNoErrorUi
+            fFlags = FofAllowUndo | FofNoErrorUi
         };
 
         try

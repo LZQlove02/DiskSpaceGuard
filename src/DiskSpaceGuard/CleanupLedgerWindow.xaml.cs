@@ -63,6 +63,11 @@ public partial class CleanupLedgerWindow : Window
                       ? string.Format(T("Ledger.SkippedLines"), result.SkippedLines)
                       : string.Empty);
 
+            // 上次执行若未正常收尾（崩溃 / 断电），active 标记仍在，如实告知结果未知。
+            var active = ActivePlanFile.Read();
+            if (active is not null)
+                StatusText.Text += "  " + string.Format(T("Ledger.IncompleteRun"), active.Paths.Count);
+
             FooterText.Text = string.Format(T("Ledger.File"), _ledgerPath);
 
             if (_entries.Count > 0) EntriesList.SelectedIndex = 0;

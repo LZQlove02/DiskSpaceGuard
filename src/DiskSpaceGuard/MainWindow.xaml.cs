@@ -813,7 +813,7 @@ public partial class MainWindow : Window
         DupCleanButton.IsEnabled = selected.Count > 0;
     }
 
-    private void DupClean_Click(object sender, RoutedEventArgs e)
+    private async void DupClean_Click(object sender, RoutedEventArgs e)
     {
         var selected = _duplicateRows.Where(r => r.IsSelected && r.IsDeletable).ToList();
         if (selected.Count == 0)
@@ -832,49 +832,74 @@ public partial class MainWindow : Window
             return;
         }
 
-        var verification = _duplicateService.VerifyForDelete(group,
-            selected.Select(r => r.File.Path).ToList());
-        if (verification.Rejected.Count > 0)
+        // 复用查重页的取消源：点「取消」或关闭窗口都能中止这次校验。
+        if (_duplicateCts is null || _duplicateCts.IsCancellationRequested)
         {
-            MessageBox.Show(this, F("Dup.VerifyFailed", verification.Rejected.Count),
-                "DiskSpaceGuard", MessageBoxButton.OK, MessageBoxImage.Warning);
+            _duplicateCts?.Dispose();
+            _duplicateCts = new CancellationTokenSource();
         }
-        if (verification.Verified.Count == 0) return;
-
-        var nodes = verification.Verified
-            .Select(f => new ScanNode(Path.GetFileName(f.Path), f.Path, NodeKind.File)
-            {
-                LogicalSize = f.Size
-            })
-            .ToList();
-
-        var rootHint = _duplicateCustomRoot ??
-            (DupVolumeCombo.SelectedItem as DriveVolume)?.Name ?? string.Empty;
-        var plan = _deleteService.BuildPlan(nodes, DeleteMode.RecycleFirst, rootHint);
-        var dialog = new DeletePlanWindow(_deleteService, nodes, rootHint,
-            recursive: false, initialPlan: plan, initialReport: null)
+        var verifyToken = _duplicateCts!.Token;
+        DupCleanButton.IsEnabled = false;
+        try
         {
-            Owner = this
-        };
-        if (dialog.ShowDialog() != true || dialog.Result is null) return;
+            // 全量 SHA-256 可能读数十 GB，必须移出 UI 线程且可取消。
+            var paths = selected.Select(r => r.File.Path).ToList();
+            var verification = await Task.Run(
+                () => _duplicateService.VerifyForDelete(group, paths, verifyToken));
+            if (verification.Rejected.Count > 0)
+            {
+                MessageBox.Show(this, F("Dup.VerifyFailed", verification.Rejected.Count),
+                    "DiskSpaceGuard", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            if (verification.Verified.Count == 0) return;
 
-        var result = dialog.Result;
-        var success = result.Deleted + result.RecyclePending;
-        MessageBox.Show(this,
-            F("Cleanup.Success", success, result.RecyclePending) + "\n" +
-            F("Cleanup.SkippedFailed", result.Skipped, result.Failed),
-            T("Cleanup.ResultTitle"), MessageBoxButton.OK,
-            result.Failed > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+            var nodes = verification.Verified
+                .Select(f => new ScanNode(Path.GetFileName(f.Path), f.Path, NodeKind.File)
+                {
+                    LogicalSize = f.Size
+                })
+                .ToList();
 
-        RemoveCleanedDuplicates();
+            var rootHint = _duplicateCustomRoot ??
+                (DupVolumeCombo.SelectedItem as DriveVolume)?.Name ?? string.Empty;
+            var plan = _deleteService.BuildPlan(nodes, DeleteMode.RecycleFirst, rootHint);
+            var dialog = new DeletePlanWindow(_deleteService, nodes, rootHint,
+                recursive: false, initialPlan: plan, initialReport: null)
+            {
+                Owner = this
+            };
+            if (dialog.ShowDialog() != true || dialog.Result is null) return;
+
+            var result = dialog.Result;
+            var success = result.Deleted + result.RecyclePending;
+            MessageBox.Show(this,
+                F("Cleanup.Success", success, result.RecyclePending) + "\n" +
+                F("Cleanup.SkippedFailed", result.Skipped, result.Failed),
+                T("Cleanup.ResultTitle"), MessageBoxButton.OK,
+                result.Failed > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+
+            RemoveCleanedDuplicates(nodes.Select(n => n.FullPath).ToList());
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            DupCleanButton.IsEnabled = true;
+        }
     }
 
-    private void RemoveCleanedDuplicates()
+    private void RemoveCleanedDuplicates(IReadOnlyCollection<string> attemptedPaths)
     {
         if (_duplicateResult is null) return;
 
+        // 只对本轮真正尝试清理的路径做存在性检查；其余节点直接保留，
+        // 避免删除后对整棵树逐文件 stat（100 万节点 ≈ 100 万次 File.Exists）。
+        var attempted = new HashSet<string>(attemptedPaths, StringComparer.OrdinalIgnoreCase);
         var groups = _duplicateResult.Groups
-            .Select(g => g with { Files = g.Files.Where(f => File.Exists(f.Path)).ToList() })
+            .Select(g => g with { Files = g.Files
+                .Where(f => !attempted.Contains(f.Path) || File.Exists(f.Path)).ToList() })
             .Where(g => g.Files.Count(f => !f.Unstable) >= 2)
             .ToList();
 
@@ -1101,7 +1126,8 @@ public partial class MainWindow : Window
         {
             var isSelected = string.Equals(button.Tag as string, _currentPage, StringComparison.Ordinal);
             button.Background = isSelected ? ThemeBrush("NavSelectedBrush") : Brushes.Transparent;
-            button.Foreground = isSelected ? Brushes.White : ThemeBrush("NavTextBrush");
+            button.Foreground = isSelected ? ThemeBrush("NavSelectedTextBrush") : ThemeBrush("NavTextBrush");
+            button.FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal;
         }
     }
 
@@ -1414,7 +1440,7 @@ public partial class MainWindow : Window
     {
         button.Background = selected ? ThemeBrush("AccentBrush") : ThemeBrush("CardBrush");
         button.BorderBrush = selected ? ThemeBrush("AccentBrush") : ThemeBrush("BorderBrush");
-        button.Foreground = selected ? Brushes.White : ThemeBrush("PrimaryTextBrush");
+        button.Foreground = selected ? ThemeBrush("OnAccentBrush") : ThemeBrush("PrimaryTextBrush");
     }
 
     private void MergeSmall_Changed(object sender, RoutedEventArgs e)
@@ -1454,7 +1480,7 @@ public partial class MainWindow : Window
                 : F("Cleanup.SelectedCount", selected.Count);
     }
 
-    private void DeleteSelected_Click(object sender, RoutedEventArgs e)
+    private async void DeleteSelected_Click(object sender, RoutedEventArgs e)
     {
         var nodes = ScanResultList.SelectedItems.OfType<ScanNode>()
             .Where(IsDeletableSelection)
@@ -1482,8 +1508,17 @@ public partial class MainWindow : Window
         PlanBuildReport? buildReport = null;
         if (recursive)
         {
-            initialPlan = _deleteService.TryBuildPlan(nodes, DeleteMode.RecycleFirst, rootHint,
-                recursive: true, out var report, out var error);
+            // 递归展开目录会产生大量 CreateFileW/stat，必须移出 UI 线程。
+            DeletePlan? built;
+            PlanBuildReport report;
+            string error;
+            (built, report, error) = await Task.Run(() =>
+            {
+                var p = _deleteService.TryBuildPlan(nodes, DeleteMode.RecycleFirst, rootHint,
+                    recursive: true, out var r, out var e);
+                return (p, r, e);
+            });
+            initialPlan = built;
             if (initialPlan is null)
             {
                 MessageBox.Show(this, error, T("Cleanup.PlanFailed"),
@@ -1660,6 +1695,6 @@ public partial class MainWindow : Window
         "Overview", "Analysis", "Duplicates", "Apps", "Hardware"
     };
 
-    private static Brush ThemeBrush(string key)
-        => Application.Current.Resources[key] as Brush ?? Brushes.Transparent;
+    /// <summary>统一走 ThemeService，避免各窗口各写一份资源查询。</summary>
+    private static Brush ThemeBrush(string key) => ThemeService.ThemeBrush(key);
 }

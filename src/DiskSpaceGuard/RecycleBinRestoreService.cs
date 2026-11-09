@@ -18,15 +18,29 @@ public static class RecycleBinRestoreService
 {
     private const int RecycleBinNamespace = 10;
 
-    /// <summary>只有回收站方式的记录才能还原；按路径去重。</summary>
+    /// <summary>只有回收站方式、且路径为本地可信路径的记录才能还原；按路径去重。</summary>
     public static IReadOnlyList<string> RestorablePaths(CleanupLedgerEntry entry)
     {
         if (entry.Mode == "Permanent") return Array.Empty<string>();
         return entry.Items
-            .Where(i => i.Outcome == "MovedToRecycleBin" && !string.IsNullOrWhiteSpace(i.Path))
-            .Select(i => i.Path)
+            .Where(i => i.Outcome == "MovedToRecycleBin" && IsSafeRestorePath(i.Path))
+            .Select(i => ProtectionEvaluator.Normalize(i.Path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// 台账位于 %LOCALAPPDATA%，可被同用户其他进程篡改。还原前只接受本地盘符的规范化绝对路径，
+    /// 拒绝 UNC（File.Exists 会触发出站 SMB / NetNTLMv2 泄露）、设备前缀、卷 GUID 与备用数据流。
+    /// </summary>
+    internal static bool IsSafeRestorePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        var normalized = ProtectionEvaluator.Normalize(path);
+        if (normalized.Length == 0) return false;
+        var root = Path.GetPathRoot(normalized);
+        return !string.IsNullOrEmpty(root) && root.Length >= 2 &&
+               char.IsLetter(root[0]) && root[1] == ':';
     }
 
     public static RestoreResult Restore(IReadOnlyList<string> originalPaths)
@@ -50,9 +64,24 @@ public static class RecycleBinRestoreService
             return AllFailed(originalPaths, ex.Message);
         }
 
+        // 一次性建立回收站条目索引，把 O(P×R) 的 COM 全扫降为 O(R+P)。
+        Dictionary<string, dynamic>? index = null;
+        try { index = BuildIndex(recycleBin); }
+        catch (Exception ex) when (ex is COMException or InvalidCastException)
+        {
+            System.Diagnostics.Debug.WriteLine($"Recycle index failed: {ex.Message}");
+        }
+
         foreach (var path in originalPaths)
         {
             if (string.IsNullOrWhiteSpace(path)) continue;
+
+            // 台账可被篡改：非本地 / 不可信路径一律不触发任何文件系统或 Shell 访问。
+            if (!IsSafeRestorePath(path))
+            {
+                results.Add(new RestoreItemResult(path, false, Text("Restore.NotFound")));
+                continue;
+            }
 
             if (File.Exists(path) || Directory.Exists(path))
             {
@@ -62,7 +91,16 @@ public static class RecycleBinRestoreService
 
             try
             {
-                dynamic? item = FindItem(recycleBin, path);
+                dynamic? item;
+                if (index is not null)
+                {
+                    var key = path.TrimEnd(Path.DirectorySeparatorChar);
+                    item = index.TryGetValue(key, out var found) ? found : null;
+                }
+                else
+                {
+                    item = FindItem(recycleBin, path);
+                }
                 if (item is null)
                 {
                     results.Add(new RestoreItemResult(path, false, Text("Restore.NotFound")));
@@ -91,6 +129,44 @@ public static class RecycleBinRestoreService
             results.Count(r => r.Restored),
             results.Count(r => !r.Restored),
             results);
+    }
+
+    /// <summary>一次遍历回收站，按「原位置」建索引；同名多条保留第一条，与 FindItem 语义一致。</summary>
+    private static Dictionary<string, dynamic> BuildIndex(dynamic recycleBin)
+    {
+        var index = new Dictionary<string, dynamic>(StringComparer.OrdinalIgnoreCase);
+        dynamic items = recycleBin.Items();
+        var count = (int)items.Count;
+
+        for (var i = 0; i < count; i++)
+        {
+            dynamic item = items.Item(i);
+            string? itemPath = null;
+            string? deletedFrom = null;
+            string? name = null;
+
+            try { itemPath = item.Path as string; } catch (COMException) { }
+            try
+            {
+                deletedFrom = item.ExtendedProperty("System.Recycle.DeletedFrom") as string;
+                name = item.Name as string;
+            }
+            catch (COMException) { }
+
+            if (!string.IsNullOrEmpty(deletedFrom) && !string.IsNullOrEmpty(name))
+            {
+                var key = Path.Combine(deletedFrom, name)
+                    .TrimEnd(Path.DirectorySeparatorChar);
+                if (!index.ContainsKey(key)) index[key] = item;
+            }
+            else if (!string.IsNullOrEmpty(itemPath))
+            {
+                var key = itemPath.TrimEnd(Path.DirectorySeparatorChar);
+                if (!index.ContainsKey(key)) index[key] = item;
+            }
+        }
+
+        return index;
     }
 
     private static dynamic? FindItem(dynamic recycleBin, string originalPath)

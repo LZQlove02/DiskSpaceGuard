@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Windows;
-using System.Windows.Media;
 using System.Windows.Threading;
 using DiskSpaceGuard.Models;
 using DiskSpaceGuard.Services;
@@ -34,7 +33,8 @@ public partial class FileInfoWindow : Window
         {
             VerdictLabel.Text = T("FileInfo.Aggregate");
             VerdictText.Text = T("FileInfo.AggregateDesc");
-            SetColors("#F1F5F9", "#475569");
+            // SoftBrush 上 SecondaryTextBrush 只有 4.47:1，改用更浅的 SubtleBrush（4.64:1）。
+            SetColors("SubtleBrush", "SecondaryTextBrush");
         }
         else
         {
@@ -56,19 +56,20 @@ public partial class FileInfoWindow : Window
 
     private void ApplyVerdictColor(FileSafety level)
     {
-        var (background, foreground) = level switch
+        var (backgroundKey, foregroundKey) = level switch
         {
-            FileSafety.Blocked => ("#FEE2E2", "#B91C1C"),
-            FileSafety.Keep or FileSafety.ConfirmBeforeDelete or FileSafety.Unknown => ("#FEF3C7", "#B45309"),
-            _ => ("#DCFCE7", "#15803D")
+            FileSafety.Blocked => ("DangerBgBrush", "DangerTextBrush"),          // 4.76:1
+            FileSafety.Keep or FileSafety.ConfirmBeforeDelete or FileSafety.Unknown
+                => ("WarningBgBrush", "WarningTextBrush"),                        // 6.28:1
+            _ => ("SuccessBgBrush", "SuccessTextBrush")                           // 8.37:1
         };
-        SetColors(background, foreground);
+        SetColors(backgroundKey, foregroundKey);
     }
 
-    private void SetColors(string background, string foreground)
+    private void SetColors(string backgroundKey, string foregroundKey)
     {
-        VerdictBox.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(background));
-        VerdictText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(foreground));
+        VerdictBox.Background = ThemeService.ThemeBrush(backgroundKey);
+        VerdictText.Foreground = ThemeService.ThemeBrush(foregroundKey);
     }
 
     private void Bing_Click(object sender, RoutedEventArgs e) =>

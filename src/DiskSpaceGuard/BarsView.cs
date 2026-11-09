@@ -47,15 +47,29 @@ public sealed class BarsView : FrameworkElement
             return;
         }
 
-        var ordered = _root.Children.Where(c => c.LogicalSize > 0).OrderByDescending(c => c.LogicalSize).ToList();
-
         // 行高固定，按可用高度决定可显示行数（上限 MaxRows）；其余折叠为一行汇总。
         const double rowHeight = 20.0;
         const double gap = 5.0;
         var capacity = Math.Max(3, (int)((ActualHeight - 26) / (rowHeight + gap)));
-        var shown = Math.Min(Math.Min(MaxRows, capacity), ordered.Count);
-        var rows = ordered.Take(shown).ToList();
-        var rest = ordered.Skip(shown).ToList();
+        var shown = Math.Min(MaxRows, capacity);
+
+        // Top-K 小顶堆：O(m log K)，避免对上万子项做全量 OrderByDescending。
+        var heap = new PriorityQueue<ScanNode, long>();
+        var rest = new List<ScanNode>();
+        foreach (var child in _root.Children)
+        {
+            if (child.LogicalSize <= 0) continue;
+            if (heap.Count < shown) heap.Enqueue(child, child.LogicalSize);
+            else if (child.LogicalSize > heap.PeekPriority())
+            {
+                rest.Add(heap.Dequeue());
+                heap.Enqueue(child, child.LogicalSize);
+            }
+            else rest.Add(child);
+        }
+
+        var rows = heap.UnorderedItems.Select(p => p.Element)
+            .OrderByDescending(c => c.LogicalSize).ToList();
 
         var total = Math.Max(1, _root.LogicalSize);
         var max = Math.Max(1, rows.Count > 0 ? rows[0].LogicalSize : 1);
@@ -102,7 +116,7 @@ public sealed class BarsView : FrameworkElement
 
     private void DrawEmpty(DrawingContext dc)
     {
-        var text = MakeText("无子项", 12, new SolidColorBrush(Color.FromRgb(0x8A, 0x93, 0xA3)));
+        var text = MakeText("无子项", 12, VisualColors.MutedText);
         dc.DrawText(text, new Point(Math.Max(0, (ActualWidth - text.Width) / 2), Math.Max(0, (ActualHeight - text.Height) / 2)));
     }
 

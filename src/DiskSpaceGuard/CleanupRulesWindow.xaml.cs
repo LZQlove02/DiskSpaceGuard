@@ -102,7 +102,7 @@ public partial class CleanupRulesWindow : Window
             s.Protection is ProtectionLevel.L2 or ProtectionLevel.L3;
     }
 
-    private void Preview_Click(object sender, RoutedEventArgs e)
+    private async void Preview_Click(object sender, RoutedEventArgs e)
     {
         if (SuggestionList.SelectedItem is not CleanupSuggestionRow row) return;
         var suggestion = row.Suggestion;
@@ -114,38 +114,56 @@ public partial class CleanupRulesWindow : Window
             return;
         }
 
-        var node = new ScanNode(suggestion.Name, suggestion.Path, NodeKind.Directory)
+        PreviewButton.IsEnabled = false;
+        try
         {
-            LogicalSize = suggestion.Bytes
-        };
+            // 只把「当前仍命中规则」的具体文件送进计划，不再 recursive 展开规则目录：
+            // 活跃文件、计划外新增文件与目录本体都不会进入删除计划。
+            var hitPaths = await Task.Run(
+                () => _ruleService.GetMatchedFiles(suggestion, CancellationToken.None));
+            if (hitPaths.Count == 0)
+            {
+                MessageBox.Show(this, T("Rules.None"), "DiskSpaceGuard",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
 
-        var plan = _deleteService.TryBuildPlan(new[] { node }, DeleteMode.RecycleFirst,
-            suggestion.Path, recursive: true, out var report, out var error);
-        if (plan is null)
-        {
-            MessageBox.Show(this, error, T("Rules.PlanFailed"),
-                MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
+            var nodes = hitPaths
+                .Select(p => new ScanNode(Path.GetFileName(p), p, NodeKind.File))
+                .ToList();
+
+            var plan = _deleteService.TryBuildPlan(nodes, DeleteMode.RecycleFirst,
+                suggestion.Path, recursive: false, out var report, out var error);
+            if (plan is null)
+            {
+                MessageBox.Show(this, error, T("Rules.PlanFailed"),
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var dialog = new DeletePlanWindow(_deleteService, nodes, suggestion.Path,
+                recursive: false, initialPlan: plan, initialReport: report)
+            {
+                Owner = this
+            };
+
+            if (dialog.ShowDialog() != true || dialog.Result is not { } result) return;
+
+            var success = result.Deleted + result.RecyclePending;
+            MessageBox.Show(this,
+                string.Format(T("Rules.Result"), suggestion.RuleId, suggestion.Name,
+                    success, result.Skipped, result.Failed,
+                    ScanNode.FormatBytes(result.EstimatedBytes),
+                    result.Mode == DeleteMode.RecycleFirst ? T("Cleanup.RecycleDelay") : string.Empty),
+                T("Rules.ResultTitle"), MessageBoxButton.OK,
+                result.Failed > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+
+            _ = ReloadAsync();
         }
-
-        var dialog = new DeletePlanWindow(_deleteService, new[] { node }, suggestion.Path,
-            recursive: true, initialPlan: plan, initialReport: report)
+        finally
         {
-            Owner = this
-        };
-
-        if (dialog.ShowDialog() != true || dialog.Result is not { } result) return;
-
-        var success = result.Deleted + result.RecyclePending;
-        MessageBox.Show(this,
-            string.Format(T("Rules.Result"), suggestion.RuleId, suggestion.Name,
-                success, result.Skipped, result.Failed,
-                ScanNode.FormatBytes(result.EstimatedBytes),
-                result.Mode == DeleteMode.RecycleFirst ? T("Cleanup.RecycleDelay") : string.Empty),
-            T("Rules.ResultTitle"), MessageBoxButton.OK,
-            result.Failed > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
-
-        _ = ReloadAsync();
+            PreviewButton.IsEnabled = true;
+        }
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();

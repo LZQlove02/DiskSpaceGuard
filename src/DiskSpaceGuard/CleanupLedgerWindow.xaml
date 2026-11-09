@@ -5,7 +5,7 @@
         Title="{Binding [Ledger.Title], Source={x:Static svc:Loc.Instance}}"
         Width="1020" Height="640" MinWidth="820" MinHeight="500"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
-        Background="{StaticResource WindowBrush}" FontFamily="Microsoft YaHei UI" FontSize="13">
+        Background="{StaticResource WindowBrush}" FontFamily="{StaticResource UiFontFamily}" FontSize="13">
   <Grid Margin="22">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
@@ -23,7 +23,7 @@
 
     <Grid Grid.Row="1" Margin="0,14,0,10">
       <StackPanel Orientation="Horizontal">
-        <Button Content="{Binding [Common.Refresh], Source={x:Static svc:Loc.Instance}}" Click="Refresh_Click" Padding="14,7" Background="{StaticResource SoftBrush}"
+        <Button Content="{Binding [Common.Refresh], Source={x:Static svc:Loc.Instance}}" Click="Refresh_Click" Margin="0" Padding="14,7" Background="{StaticResource SoftBrush}"
                 Foreground="{StaticResource AccentBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
         <Button Content="{Binding [Common.OpenFolder], Source={x:Static svc:Loc.Instance}}" Click="OpenFolder_Click" Margin="10,0,0,0" Padding="14,7"
                 Background="Transparent" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
@@ -89,7 +89,7 @@
 
     <DockPanel Grid.Row="3" Margin="0,14,0,0" LastChildFill="False">
       <TextBlock x:Name="FooterText" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" FontSize="10.5"
-                 FontFamily="Consolas" Text=""/>
+                 FontFamily="{StaticResource MonoFontFamily}" Text=""/>
       <Button DockPanel.Dock="Right" Content="{Binding [Common.Close], Source={x:Static svc:Loc.Instance}}" Click="Close_Click" Padding="18,8"
               Background="Transparent" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
     </DockPanel>

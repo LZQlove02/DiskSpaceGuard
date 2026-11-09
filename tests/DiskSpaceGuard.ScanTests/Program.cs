@@ -73,7 +73,11 @@ var tests = new (string Name, Func<Task> Run)[]
     ("T55 诊断脱敏与日志尾部", DiagnosticsPrivacy),
     ("T56 诊断 ZIP 导出结构", DiagnosticsExport),
     ("T57 身份布局与读取稳定性", FileIdentityLayout),
-    ("T58 黄金分割布局面积与边界", GoldenLayoutInvariants)
+    ("T58 黄金分割布局面积与边界", GoldenLayoutInvariants),
+    ("T59 安全加固回归（路径/卸载/还原/脱敏）", SecurityHardening),
+    ("T60 性能加固回归（节流/取消/台账流式读）", PerformanceHardening),
+    ("T61 数据安全回归（规则命中/时间戳）", DataSafetyHardening),
+    ("T62 崩溃可追溯与静态缓存回归", RecoveryAndCaching)
 };
 
 var failed = 0;
@@ -344,6 +348,201 @@ static Task PathBoundary()
     Assert(ProtectionEvaluator.IsUnder(windows, windows), "根自身应判定为在根下");
     Assert(!ProtectionEvaluator.IsUnder(windows + "Old", windows), "C:\\WindowsOld 不得命中 C:\\Windows");
     Assert(!ProtectionEvaluator.IsUnder(Path.Combine(windows, "..", "Other"), windows), "上级路径不得命中");
+    return Task.CompletedTask;
+}
+
+static Task SecurityHardening()
+{
+    var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+    var systemFile = Path.Combine(windows, "System32", "a.dll");
+
+    // S2：设备前缀必须剥离后再判定；UNC / ADS / 卷 GUID 一律不可信。
+    Assert(ProtectionEvaluator.Normalize(@"\\?\" + systemFile) == systemFile,
+        "设备前缀应剥离后参与保护判定");
+    Assert(ProtectionEvaluator.Normalize(@"\\server\share\a.exe").Length == 0,
+        "UNC 路径应被拒绝");
+    Assert(ProtectionEvaluator.Normalize(@"C:\a.txt:stream").Length == 0,
+        "备用数据流路径应被拒绝");
+    Assert(ProtectionEvaluator.Normalize(@"\\?\Volume{00000000-0000-0000-0000-000000000000}\a.exe").Length == 0,
+        "卷 GUID 路径应被拒绝");
+    var evaluator = new ProtectionEvaluator();
+    Assert(evaluator.Evaluate(@"\\?\" + systemFile, FileAttributes.Normal, out _) == ProtectionLevel.L0,
+        "设备前缀不得绕过 L0 硬禁止");
+    Assert(ProtectionEvaluator.IsUnder(systemFile, windows), "正常子路径仍应判定在保护根下");
+    Assert(!ProtectionEvaluator.IsUnder(windows + "Old", windows), "路径边界比较不得被前缀误命中");
+
+    // S2 配套：残留登记不得接受不可信路径。
+    Assert(!AppLeftoverStore.IsSafeLocation(@"\\?\" + Path.Combine(windows, "System32")),
+        "设备前缀不得登记为残留");
+    Assert(!AppLeftoverStore.IsSafeLocation(@"\\server\share\App"), "UNC 不得登记为残留");
+
+    // S3：还原路径白名单 + CSV 公式防护。
+    Assert(RecycleBinRestoreService.IsSafeRestorePath(@"C:\a\one.bin"), "本地路径应可还原");
+    Assert(!RecycleBinRestoreService.IsSafeRestorePath(@"\\server\share\one.bin"), "UNC 不得触发还原");
+    Assert(!RecycleBinRestoreService.IsSafeRestorePath(@"C:\a.txt:stream"), "ADS 不得触发还原");
+
+    var csvEntry = new CleanupLedgerEntry(
+        Guid.NewGuid(), DateTime.UtcNow, DateTime.UtcNow,
+        "RecycleFirst", "hash", 1, 0, 1, 0, 0, 0, 0, "",
+        new[] { new CleanupLedgerItem(1, @"C:\a.bin", "MovedToRecycleBin", "Matched", "=1+1") });
+    Assert(CleanupLedgerCsv.Build(new[] { csvEntry }).Contains("\"'=1+1\""),
+        "公式字符开头必须加单引号前缀");
+
+    // S1：卸载目标可信边界。
+    Assert(!AppUninstallService.TryResolveTrustedLaunch("cmd.exe", out _, out _),
+        "解释器类目标应被拒绝");
+    Assert(!AppUninstallService.TryResolveTrustedLaunch(@"\\server\share\setup.exe", out _, out _),
+        "UNC 卸载目标应被拒绝");
+    Assert(!AppUninstallService.TryResolveTrustedLaunch(@"C:\Windows\System32\cmd.exe", out _, out _),
+        "系统解释器应被拒绝");
+    Assert(!AppUninstallService.TryResolveTrustedLaunch(@"C:\DefinitelyMissing\setup.exe", out _, out _),
+        "不存在的目标应被拒绝");
+    var system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+    var msiPath = Path.Combine(system, "msiexec.exe");
+    if (File.Exists(msiPath))
+    {
+        Assert(AppUninstallService.TryResolveTrustedLaunch("MsiExec.exe", out var msi, out _) &&
+               string.Equals(msi, Path.GetFullPath(msiPath), StringComparison.OrdinalIgnoreCase),
+            "msiexec 应固定解析到 System32");
+    }
+
+    // S4：脱敏不得改写普通路径。
+    const string plain = @"C:\Temp\data\a.bin";
+    Assert(PrivacyRedactor.Redact(plain, "Alice", @"C:\Users\Alice") == plain,
+        "不含敏感信息的文本不得被改写");
+    var guid = PrivacyRedactor.Redact(
+        @"\\?\Volume{12345678-1234-1234-1234-123456789abc}\file.txt", "Alice", @"C:\Users\Alice");
+    Assert(guid.Contains("<volume>") && !guid.Contains("12345678"), "卷 GUID 应脱敏");
+    var cred = PrivacyRedactor.Redact("uninstall.exe /PASSWORD=s3cr3t /S", "Alice", @"C:\Users\Alice");
+    Assert(!cred.Contains("s3cr3t") && cred.Contains("<redacted>"), "凭据参数应脱敏");
+
+    return Task.CompletedTask;
+}
+
+static Task PerformanceHardening()
+{
+    // P2：进度节流合并与收尾补发。
+    var counter = new CountingProgress<int>();
+    var throttled = new ThrottledProgress<int>(counter, 10_000);
+    for (var i = 0; i < 100; i++) throttled.Report(i);
+    Assert(counter.Count == 1, $"间隔内的 100 次上报应合并为 1 次，实际 {counter.Count}");
+    throttled.Flush();
+    Assert(counter.Count == 2 && counter.Last == 99, "Flush 应补发最后一次结果");
+
+    // P1：删除前校验必须响应取消。
+    var service = new DuplicateFinderService();
+    var file = new DuplicateFile(@"C:\a.bin", 1, DateTime.UtcNow, @"C:\", "id",
+        false, false, "hash", false);
+    var group = new DuplicateGroup(1, "hash", new[] { file }, @"C:\a.bin");
+    using var cts = new CancellationTokenSource();
+    cts.Cancel();
+    var cancelled = false;
+    try { service.VerifyForDelete(group, new[] { @"C:\a.bin" }, cts.Token); }
+    catch (OperationCanceledException) { cancelled = true; }
+    Assert(cancelled, "已取消的删除前校验应立即中止");
+
+    // P3：台账流式环形队列只保留尾部 N 行且顺序不变。
+    var root = NewTempDir();
+    try
+    {
+        var ledger = Path.Combine(root, "cleanup-log.jsonl");
+        var lines = Enumerable.Range(1, 5).Select(i =>
+            "{\"planId\":\"" + Guid.NewGuid() +
+            "\",\"createdUtc\":\"2026-01-01T00:00:00Z\",\"executedUtc\":\"2026-01-01T00:00:00Z\"," +
+            "\"mode\":\"RecycleFirst\",\"planHash\":\"hash" + i +
+            "\",\"total\":0,\"items\":[]}").ToList();
+        File.WriteAllLines(ledger, lines);
+        var read = CleanupLedgerReader.Read(ledger, 2);
+        Assert(read.Entries.Count == 2, $"环形队列应只保留尾部 2 行，实际 {read.Entries.Count}");
+        Assert(read.Entries[0].PlanHash == "hash4" && read.Entries[1].PlanHash == "hash5",
+            "应保留最后两条且保持文件顺序");
+    }
+    finally { SafeDelete(root); }
+
+    return Task.CompletedTask;
+}
+
+static Task DataSafetyHardening()
+{
+    // P0-2：规则命中清单必须按 MinAge 过滤，且不含规则目录本体。
+    var root = NewTempDir();
+    try
+    {
+        var old = Path.Combine(root, "old.tmp");
+        var fresh = Path.Combine(root, "fresh.tmp");
+        File.WriteAllBytes(old, new byte[64]);
+        File.WriteAllBytes(fresh, new byte[64]);
+        File.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-3));
+        File.SetLastWriteTimeUtc(fresh, DateTime.UtcNow);
+
+        var rule = new CleanupRule("test.age", "年龄规则", "测试", root,
+            TimeSpan.FromDays(1), "说明");
+        var rules = new[] { rule };
+        var service = new CleanupRuleService(rules: rules);
+        var suggestions = service.Evaluate(CancellationToken.None);
+        Assert(suggestions.Count == 1, "规则应产生 1 条建议");
+        Assert(suggestions[0].FileCount == 1 && suggestions[0].ExcludedCount >= 1,
+            "新文件必须被 MinAge 排除");
+
+        var hits = service.GetMatchedFiles(suggestions[0]);
+        Assert(hits.Count == 1 && string.Equals(hits[0], old, StringComparison.OrdinalIgnoreCase),
+            "命中清单应只含老文件，且不含规则目录本体");
+    }
+    finally { SafeDelete(root); }
+
+    // P0-3：时间戳与计划不一致时必须跳过且不得删除。
+    var root2 = NewTempDir();
+    try
+    {
+        var file = Path.Combine(root2, "x.bin");
+        File.WriteAllBytes(file, new byte[32]);
+        Assert(FileIdentityService.TryReadIdentity(file, out var id, out _), "应能读取文件身份");
+        var stale = File.GetLastWriteTimeUtc(file).AddDays(-5);
+        var (outcome, _) = FileIdentityService.VerifyAndDelete(
+            file, 32, id.VolumeSerial, id.ToPlanString(), false, false, stale);
+        Assert(outcome == FileIdentityService.VerifyOutcome.Changed && File.Exists(file),
+            "时间戳不一致必须跳过且不删除");
+    }
+    finally { SafeDelete(root2); }
+
+    return Task.CompletedTask;
+}
+
+static Task RecoveryAndCaching()
+{
+    // P0-4：进行中计划可恢复，正常收尾清除。
+    var root = NewTempDir();
+    var original = ActivePlanFile.FilePath;
+    ActivePlanFile.FilePath = Path.Combine(root, "active.json");
+    try
+    {
+        var file = Path.Combine(root, "a.bin");
+        File.WriteAllBytes(file, new byte[16]);
+        var service = new DeleteService();
+        var plan = service.BuildPlan(new[] { ScanOne(file, root) },
+            DeleteMode.RecycleFirst, root);
+
+        ActivePlanFile.Write(plan);
+        var snapshot = ActivePlanFile.Read();
+        Assert(snapshot is not null && snapshot.PlanId == plan.PlanId && snapshot.Paths.Count == 1,
+            "进行中计划应可恢复且包含完整条目数");
+
+        ActivePlanFile.Clear(plan.PlanId);
+        Assert(ActivePlanFile.Read() is null, "正常收尾应清除进行中标记");
+    }
+    finally
+    {
+        ActivePlanFile.FilePath = original;
+        SafeDelete(root);
+    }
+
+    // #5：静态根缓存后边界比较仍正确。
+    var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+    Assert(ProtectionEvaluator.IsUnder(Path.Combine(windows, "System32", "a.dll"), windows),
+        "静态根缓存后子路径仍应判为在保护根下");
+    Assert(!ProtectionEvaluator.IsUnder(windows + "Old", windows),
+        "静态根缓存不得破坏边界比较");
+
     return Task.CompletedTask;
 }
 
@@ -1447,5 +1646,12 @@ internal static class Native
 {
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool CreateHardLink(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
+}
+
+internal sealed class CountingProgress<T> : IProgress<T>
+{
+    public int Count;
+    public T? Last;
+    public void Report(T value) { Count++; Last = value; }
 }
 

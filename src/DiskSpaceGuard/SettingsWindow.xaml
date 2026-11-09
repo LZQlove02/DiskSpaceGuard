@@ -5,7 +5,7 @@
         Title="{Binding [Settings.Title], Source={x:Static svc:Loc.Instance}}"
         Width="560" Height="700"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize" ShowInTaskbar="False"
-        Background="{StaticResource WindowBrush}" FontFamily="Microsoft YaHei UI" FontSize="13">
+        Background="{StaticResource WindowBrush}" FontFamily="{StaticResource UiFontFamily}" FontSize="13">
   <Grid Margin="22">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
@@ -26,7 +26,7 @@
     </Border>
 
     <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,12,0,0">
-      <Button Content="{Binding [Common.AddFolder], Source={x:Static svc:Loc.Instance}}" Click="Add_Click" Padding="14,7" Background="{StaticResource SoftBrush}" Foreground="{StaticResource AccentBrush}"
+      <Button Content="{Binding [Common.AddFolder], Source={x:Static svc:Loc.Instance}}" Click="Add_Click" Margin="0" Padding="14,7" Background="{StaticResource SoftBrush}" Foreground="{StaticResource AccentBrush}"
               BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
       <Button Content="{Binding [Common.RemoveSelected], Source={x:Static svc:Loc.Instance}}" Click="Remove_Click" Margin="10,0,0,0" Padding="14,7" Background="Transparent"
               BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
@@ -67,8 +67,8 @@
 
     <DockPanel Grid.Row="5" Margin="0,16,0,0" LastChildFill="False">
       <Button DockPanel.Dock="Right" Content="{Binding [Common.Save], Source={x:Static svc:Loc.Instance}}"
-              Click="Save_Click" Padding="22,8" Background="{StaticResource AccentBrush}"
-              Foreground="White" BorderThickness="0" Cursor="Hand"/>
+              Click="Save_Click" Margin="0" Padding="22,8" Background="{StaticResource AccentBrush}"
+              Foreground="{StaticResource OnAccentBrush}" BorderThickness="0" Cursor="Hand"/>
       <Button DockPanel.Dock="Right" Content="{Binding [Common.Cancel], Source={x:Static svc:Loc.Instance}}"
               Click="Cancel_Click" Margin="0,0,10,0" Padding="18,8"
               Background="Transparent" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>

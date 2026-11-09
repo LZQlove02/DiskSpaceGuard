@@ -4,8 +4,9 @@
         xmlns:ctl="clr-namespace:DiskSpaceGuard.Controls"
         xmlns:svc="clr-namespace:DiskSpaceGuard.Services"
         Title="{Binding [App.WindowTitle], Source={x:Static svc:Loc.Instance}}"
-        Width="1200" Height="820" MinWidth="900" MinHeight="600"
+        Width="1440" Height="900" MinWidth="900" MinHeight="600"
         WindowStartupLocation="CenterScreen"
+        FontFamily="{StaticResource UiFontFamily}"
         Background="{StaticResource WindowBrush}">
   <Window.Resources>
     <Style x:Key="SegButton" TargetType="Button">
@@ -28,23 +29,62 @@
         </Setter.Value>
       </Setter>
     </Style>
+
+    <!-- 导航项：对齐设计稿（40px 命中高度 / 8px 圆角 / 4px 间距 / 选中加粗）。
+         悬停用独立覆盖层而非改 Background —— 选中底色由 UpdateNavigationSelection
+         以本地值写入，优先级高于 Style 触发器，直接改 Background 会导致悬停失效。 -->
+    <Style x:Key="NavItem" TargetType="Button">
+      <Setter Property="MinHeight" Value="40"/>
+      <Setter Property="Margin" Value="0,0,0,4"/>
+      <Setter Property="Padding" Value="14,0"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid SnapsToDevicePixels="True">
+              <Border Background="{TemplateBinding Background}" CornerRadius="8"/>
+              <Border x:Name="Hover" Background="{StaticResource PrimaryTextBrush}"
+                      Opacity="0" CornerRadius="8"/>
+              <Border x:Name="FocusRing" BorderBrush="{StaticResource AccentBrush}"
+                      BorderThickness="2" CornerRadius="8" Visibility="Collapsed"/>
+              <ContentPresenter Margin="{TemplateBinding Padding}" RecognizesAccessKey="True"
+                                HorizontalAlignment="Left" VerticalAlignment="Center"/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Hover" Property="Opacity" Value="0.05"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="FocusRing" Property="Visibility" Value="Visible"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
   <Grid>
-    <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-    <Border Grid.Column="0" Background="{StaticResource NavBrush}" Padding="18">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="236"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Border Grid.Column="0" Background="{StaticResource NavBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0" Padding="18">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,26">
-          <TextBlock Text="DiskSpaceGuard" Foreground="White" FontSize="19" FontWeight="Bold"/>
-          <TextBlock Text="{Binding [App.Subtitle], Source={x:Static svc:Loc.Instance}}" Foreground="#9CA3AF" Margin="0,6,0,0"/>
+          <TextBlock Text="DiskSpaceGuard" Foreground="{StaticResource PrimaryTextBrush}" FontSize="19" FontWeight="Bold"/>
+          <TextBlock Text="{Binding [App.Subtitle], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,6,0,0"/>
         </StackPanel>
         <StackPanel>
-          <Button Content="{Binding [Nav.Overview], Source={x:Static svc:Loc.Instance}}" Tag="Overview" Click="Navigation_Click" Background="{StaticResource NavSelectedBrush}" Foreground="White" BorderThickness="0"/>
-          <Button Content="{Binding [Nav.Analysis], Source={x:Static svc:Loc.Instance}}" Tag="Analysis" Click="Navigation_Click" Background="Transparent" Foreground="{StaticResource NavTextBrush}" BorderThickness="0"/>
-          <Button Content="{Binding [Nav.Duplicates], Source={x:Static svc:Loc.Instance}}" Tag="Duplicates" Click="Navigation_Click" Background="Transparent" Foreground="{StaticResource NavTextBrush}" BorderThickness="0"/>
-          <Button Content="{Binding [Nav.Apps], Source={x:Static svc:Loc.Instance}}" Tag="Apps" Click="Navigation_Click" Background="Transparent" Foreground="{StaticResource NavTextBrush}" BorderThickness="0"/>
-          <Button Content="{Binding [Nav.Hardware], Source={x:Static svc:Loc.Instance}}" Tag="Hardware" Click="Navigation_Click" Background="Transparent" Foreground="{StaticResource NavTextBrush}" BorderThickness="0"/>
+          <Button Style="{StaticResource NavItem}" Content="{Binding [Nav.Overview], Source={x:Static svc:Loc.Instance}}" Tag="Overview" Click="Navigation_Click" Background="{StaticResource NavSelectedBrush}" Foreground="{StaticResource NavSelectedTextBrush}" FontWeight="SemiBold"/>
+          <Button Style="{StaticResource NavItem}" Content="{Binding [Nav.Analysis], Source={x:Static svc:Loc.Instance}}" Tag="Analysis" Click="Navigation_Click" Background="Transparent" Foreground="{StaticResource NavTextBrush}"/>
+          <Button Style="{StaticResource NavItem}" Content="{Binding [Nav.Duplicates], Source={x:Static svc:Loc.Instance}}" Tag="Duplicates" Click="Navigation_Click" Background="Transparent" Foreground="{StaticResource NavTextBrush}"/>
+          <Button Style="{StaticResource NavItem}" Content="{Binding [Nav.Apps], Source={x:Static svc:Loc.Instance}}" Tag="Apps" Click="Navigation_Click" Background="Transparent" Foreground="{StaticResource NavTextBrush}"/>
+          <Button Style="{StaticResource NavItem}" Content="{Binding [Nav.Hardware], Source={x:Static svc:Loc.Instance}}" Tag="Hardware" Click="Navigation_Click" Background="Transparent" Foreground="{StaticResource NavTextBrush}"/>
         </StackPanel>
-        <TextBlock DockPanel.Dock="Bottom" Text="{Binding [Nav.Footer], Source={x:Static svc:Loc.Instance}}" Foreground="#9CA3AF" Margin="0,18,0,0" VerticalAlignment="Bottom"/>
+        <TextBlock DockPanel.Dock="Bottom" Text="{Binding [Nav.Footer], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,18,0,0" VerticalAlignment="Bottom"/>
       </DockPanel>
     </Border>
 
@@ -55,7 +95,7 @@
           <TextBlock x:Name="PageTitle" FontSize="28" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}"/>
           <TextBlock x:Name="PageSubtitle" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,6,0,0"/>
         </StackPanel>
-        <Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="{Binding [Top.Refresh], Source={x:Static svc:Loc.Instance}}" Click="Refresh_Click" VerticalAlignment="Center" Background="{StaticResource AccentBrush}" Foreground="White" BorderThickness="0" Padding="20,10"/>
+        <Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="{Binding [Top.Refresh], Source={x:Static svc:Loc.Instance}}" Click="Refresh_Click" Margin="0" VerticalAlignment="Center" Background="{StaticResource AccentBrush}" Foreground="{StaticResource OnAccentBrush}" BorderThickness="0" Padding="20,10"/>
         <Button x:Name="SettingsButton" DockPanel.Dock="Right" Content="{Binding [Top.Settings], Source={x:Static svc:Loc.Instance}}" Click="Settings_Click" Margin="0,0,10,0" VerticalAlignment="Center" Background="Transparent" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="16,9"/>
         <Button x:Name="LedgerButton" DockPanel.Dock="Right" Content="{Binding [Top.Ledger], Source={x:Static svc:Loc.Instance}}" Click="Ledger_Click" Margin="0,0,10,0" VerticalAlignment="Center" Background="Transparent" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="16,9"/>
       </DockPanel>
@@ -147,7 +187,7 @@
                   <ComboBoxItem Content="3"/>
                 </ComboBox>
                 <Button x:Name="ScanStartButton" Content="{Binding [Scan.Start], Source={x:Static svc:Loc.Instance}}" Click="ScanStart_Click"
-                        Background="{StaticResource AccentBrush}" Foreground="White" BorderThickness="0"
+                        Background="{StaticResource AccentBrush}" Foreground="{StaticResource OnAccentBrush}" BorderThickness="0"
                         Padding="16,8" Margin="0,0,8,6"/>
                 <Button x:Name="ScanPauseButton" Content="{Binding [Scan.Pause], Source={x:Static svc:Loc.Instance}}" Click="ScanPause_Click"
                         IsEnabled="False" Padding="14,8" Margin="0,0,8,6"/>
@@ -184,7 +224,7 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
                   <Button x:Name="TreeViewButton" Content="{Binding [Chart.Treemap], Source={x:Static svc:Loc.Instance}}" Style="{StaticResource SegButton}"
-                          Click="ViewMode_Click" Tag="treemap" Background="{StaticResource AccentBrush}" Foreground="White" BorderBrush="{StaticResource AccentBrush}"/>
+                          Click="ViewMode_Click" Tag="treemap" Background="{StaticResource AccentBrush}" Foreground="{StaticResource OnAccentBrush}" BorderBrush="{StaticResource AccentBrush}"/>
                   <Button x:Name="SunViewButton" Content="{Binding [Chart.Sunburst], Source={x:Static svc:Loc.Instance}}" Style="{StaticResource SegButton}"
                           Click="ViewMode_Click" Tag="sunburst"/>
                   <Button x:Name="BarViewButton" Content="{Binding [Chart.Bars], Source={x:Static svc:Loc.Instance}}" Style="{StaticResource SegButton}"
@@ -192,7 +232,7 @@
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                   <Button x:Name="ColorTypeButton" Content="{Binding [Chart.ByType], Source={x:Static svc:Loc.Instance}}" Style="{StaticResource SegButton}"
-                          Click="ColorMode_Click" Tag="type" Background="{StaticResource AccentBrush}" Foreground="White" BorderBrush="{StaticResource AccentBrush}"/>
+                          Click="ColorMode_Click" Tag="type" Background="{StaticResource AccentBrush}" Foreground="{StaticResource OnAccentBrush}" BorderBrush="{StaticResource AccentBrush}"/>
                   <Button x:Name="ColorDepthButton" Content="{Binding [Chart.ByDepth], Source={x:Static svc:Loc.Instance}}" Style="{StaticResource SegButton}"
                           Click="ColorMode_Click" Tag="depth"/>
                   <Button x:Name="ColorSizeButton" Content="{Binding [Chart.BySize], Source={x:Static svc:Loc.Instance}}" Style="{StaticResource SegButton}"
@@ -273,7 +313,7 @@
                 </ComboBox>
                 <Button x:Name="DupStartButton" Content="{Binding [Dup.Start], Source={x:Static svc:Loc.Instance}}"
                         Click="DupStart_Click" Padding="16,8" Margin="0,0,8,6"
-                        Background="{StaticResource AccentBrush}" Foreground="White" BorderThickness="0"/>
+                        Background="{StaticResource AccentBrush}" Foreground="{StaticResource OnAccentBrush}" BorderThickness="0"/>
                 <Button x:Name="DupCancelButton" Content="{Binding [Dup.Cancel], Source={x:Static svc:Loc.Instance}}"
                         Click="DupCancel_Click" Padding="14,8" Margin="0,0,0,6" IsEnabled="False"/>
               </WrapPanel>
@@ -342,8 +382,8 @@
             <TextBlock Text="{Binding [Dup.ScanHint], Source={x:Static svc:Loc.Instance}}" VerticalAlignment="Center"
                        Foreground="{StaticResource SecondaryTextBrush}" FontSize="11" TextWrapping="Wrap" MaxWidth="700"/>
             <Button x:Name="DupCleanButton" DockPanel.Dock="Right" Content="{Binding [Dup.Clean], Source={x:Static svc:Loc.Instance}}"
-                    Click="DupClean_Click" Padding="14,7" IsEnabled="False"
-                    Background="{StaticResource AccentBrush}" Foreground="White" BorderThickness="0"/>
+                    Click="DupClean_Click" Margin="0" Padding="14,7" IsEnabled="False"
+                    Background="{StaticResource AccentBrush}" Foreground="{StaticResource OnAccentBrush}" BorderThickness="0"/>
             <TextBlock x:Name="DupSelectionText" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0"
                        Foreground="{StaticResource SecondaryTextBrush}" FontSize="11.5"/>
           </DockPanel>

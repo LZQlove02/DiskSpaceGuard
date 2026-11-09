@@ -27,6 +27,51 @@ internal static class VisualColors
 
     private static readonly double[] Hues = { 218, 152, 34, 280, 190, 6 };
 
+    private static readonly Brush DarkTextBrush = Freeze(new SolidColorBrush(Colors.Black));
+    private static readonly Brush LightTextBrush = Freeze(new SolidColorBrush(Colors.White));
+    private static readonly Brush FallbackMutedBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x5C, 0x74, 0x80)));
+
+    /// <summary>
+    /// 空态 / 辅助说明文字。优先取 SecondaryTextBrush（卡片上 4.92:1），
+    /// 使图表文字与 XAML 层共用同一层级；无 Application（如渲染测试）时回退到同值。
+    /// </summary>
+    public static Brush MutedText =>
+        Application.Current?.TryFindResource("SecondaryTextBrush") as Brush ?? FallbackMutedBrush;
+
+    /// <summary>
+    /// 按底色在深墨与白字之间取对比度更高者。
+    /// 深墨必须纯黑：若用 #121822（L≈0.0075），黑白交叉点会从 L=0.179 漂到 L≈0.196，
+    /// 在 0.18–0.20 区间两者都掉到 4.0 左右（Size 模式实测 3.93:1）。
+    /// 纯黑下交叉点恒为 4.58:1，因此全色域均可 ≥4.5。
+    /// </summary>
+    public static Brush TextBrushFor(Color color) =>
+        Contrast(color, Colors.Black) >= Contrast(color, Colors.White) ? DarkTextBrush : LightTextBrush;
+
+    /// <summary>WCAG 对比度。</summary>
+    public static double Contrast(Color a, Color b)
+    {
+        var la = RelativeLuminance(a);
+        var lb = RelativeLuminance(b);
+        return (Math.Max(la, lb) + 0.05) / (Math.Min(la, lb) + 0.05);
+    }
+
+    /// <summary>相对亮度（WCAG）：用于在深浅底色上自动选择可读的文字/描边颜色。</summary>
+    public static double RelativeLuminance(Color color)
+    {
+        static double Linear(byte value)
+        {
+            var s = value / 255.0;
+            return s <= 0.04045 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * Linear(color.R) + 0.7152 * Linear(color.G) + 0.0722 * Linear(color.B);
+    }
+
+    private static Brush Freeze(SolidColorBrush brush)
+    {
+        brush.Freeze();
+        return brush;
+    }
+
     public static Color For(ScanNode node, TreemapColorMode mode, int depth, long maxSize)
     {
         if (mode == TreemapColorMode.Type)
@@ -44,7 +89,7 @@ internal static class VisualColors
     }
 
     /// <summary>向白色混合，保持色相不变；用于按层级提亮。</summary>
-    private static Color Lighten(Color color, double amount) => Color.FromRgb(
+    public static Color Lighten(Color color, double amount) => Color.FromRgb(
         (byte)(color.R + (255 - color.R) * amount),
         (byte)(color.G + (255 - color.G) * amount),
         (byte)(color.B + (255 - color.B) * amount));
@@ -91,10 +136,7 @@ public sealed class TreemapView : FrameworkElement
     private const double GoldenSection = 0.6180339887498949;
     /// <summary>φ² ≈ 2.618，作为单块可接受的长宽比上限。</summary>
     private const double AspectLimit = 2.618033988749895;
-    /// <summary>黑白文字对比度交叉点约为 0.179；以此选色可保证正文 ≥4.5:1。</summary>
-    private const double ContrastThreshold = 0.179;
 
-    private static readonly Brush DarkTextBrush = CreateDarkTextBrush();
     private static readonly Pen LeafSeparatorPen = CreateLeafSeparatorPen();
 
     private static Pen CreateLeafSeparatorPen()
@@ -104,13 +146,6 @@ public sealed class TreemapView : FrameworkElement
         var pen = new Pen(brush, 1);
         pen.Freeze();
         return pen;
-    }
-
-    private static Brush CreateDarkTextBrush()
-    {
-        var brush = new SolidColorBrush(Color.FromRgb(0x12, 0x18, 0x22));
-        brush.Freeze();
-        return brush;
     }
 
     private readonly List<Box> _boxes = new();
@@ -339,7 +374,7 @@ public sealed class TreemapView : FrameworkElement
             var headerColor = VisualColors.Darken(color, 0.78);
             dc.DrawRoundedRectangle(new SolidColorBrush(headerColor), null, rect, 3, 3);
             var label = $"{box.Node.Name}  {ScanNode.FormatBytes(box.Node.LogicalSize)}";
-            DrawTextAt(dc, label, rect, 4, 10.5, 2, TextBrushFor(headerColor), FontWeights.SemiBold);
+            DrawTextAt(dc, label, rect, 4, 10.5, 2, VisualColors.TextBrushFor(headerColor), FontWeights.SemiBold);
             return;
         }
 
@@ -352,7 +387,11 @@ public sealed class TreemapView : FrameworkElement
         dc.DrawRoundedRectangle(leafBrush, separator, rect, 2.5, 2.5);
         if (rect.Width > 40 && rect.Height > 16)
         {
-            var textBrush = box.Node.IsAggregate ? Brushes.White : TextBrushFor(color);
+            // 合并块以 55% 不透明度绘制，实际呈现色是 color 与背景（近白）的混合色，
+            // 因此必须按混色后的有效色判断文字颜色，不能沿用白字（原实现 1.56–1.88:1）。
+            var textBrush = box.Node.IsAggregate
+                ? VisualColors.TextBrushFor(VisualColors.Lighten(color, 0.45))
+                : VisualColors.TextBrushFor(color);
             DrawTextAt(dc, box.Node.Name, rect, 4, 10, 3, textBrush);
             if (rect.Width > 58 && rect.Height > 33)
                 DrawTextAt(dc, ScanNode.FormatBytes(box.Node.LogicalSize), rect, 4, 9, 19, textBrush);
@@ -372,22 +411,8 @@ public sealed class TreemapView : FrameworkElement
 
         var color = VisualColors.For(_hoverBox.Node, ColorMode, _hoverBox.Depth, Math.Max(1, _root?.LogicalSize ?? 1));
         if (_hoverBox.IsHeader) color = VisualColors.Darken(color, 0.78);
-        var brush = RelativeLuminance(color) > ContrastThreshold ? DarkTextBrush : Brushes.White;
+        var brush = VisualColors.TextBrushFor(color);
         dc.DrawRoundedRectangle(null, new Pen(brush, 1.6), outline, 3, 3);
-    }
-
-    private static Brush TextBrushFor(Color color) =>
-        RelativeLuminance(color) > ContrastThreshold ? DarkTextBrush : Brushes.White;
-
-    /// <summary>相对亮度（WCAG）：用于在深浅底色上自动选择可读的文字/描边颜色。</summary>
-    private static double RelativeLuminance(Color color)
-    {
-        static double Linear(byte value)
-        {
-            var s = value / 255.0;
-            return s <= 0.04045 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
-        }
-        return 0.2126 * Linear(color.R) + 0.7152 * Linear(color.G) + 0.0722 * Linear(color.B);
     }
 
     private void DrawTextAt(DrawingContext dc, string text, Rect rect, double left, double fontSize, double top, Brush brush,
@@ -414,7 +439,7 @@ public sealed class TreemapView : FrameworkElement
 
     private void DrawCenterText(DrawingContext dc, string text)
     {
-        var formatted = MakeText(text, 12, new SolidColorBrush(Color.FromRgb(0x8A, 0x93, 0xA3)));
+        var formatted = MakeText(text, 12, VisualColors.MutedText);
         dc.DrawText(formatted, new Point(Math.Max(0, (ActualWidth - formatted.Width) / 2),
             Math.Max(0, (ActualHeight - formatted.Height) / 2)));
     }

@@ -416,6 +416,7 @@ public static class LocalizationService
         ["Restore.AlreadyExists"] = ("原位置已存在同名对象，未执行还原", "An object already exists at the original path; restore skipped"),
         ["Restore.ShellUnavailable"] = ("系统 Shell 不可用，无法还原", "System shell unavailable; cannot restore"),
         ["Restore.Done"] = ("已还原", "Restored"),
+        ["Ledger.IncompleteRun"] = ("上次执行未完成：{0} 项结果未知，请核对台账", "Incomplete run: {0} items have unknown outcome; please verify the ledger"),
 
         // 执行结果明细
         ["Exec.Fatal.Version"] = ("计划版本不兼容（schema {0} / plan {1}），执行已拒绝",

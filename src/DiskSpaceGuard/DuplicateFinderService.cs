@@ -6,6 +6,59 @@ using DiskSpaceGuard.Models;
 namespace DiskSpaceGuard.Services;
 
 /// <summary>
+/// 共享的进度节流包装（查重与删除链路复用）：把逐项 Report 合并为固定间隔的批量上报，
+/// 任务结束时 Flush 补发最后一次，保证进度条不会停在中间值。
+/// </summary>
+internal sealed class ThrottledProgress<T> : IProgress<T>
+{
+    private readonly IProgress<T> _inner;
+    private readonly long _intervalMs;
+    private readonly object _gate = new();
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
+    private long _lastReportMs;
+    private bool _hasReported;
+    private bool _hasPending;
+    private T? _latest;
+
+    public ThrottledProgress(IProgress<T> inner, int intervalMs)
+    {
+        _inner = inner;
+        _intervalMs = Math.Max(1, intervalMs);
+    }
+
+    public void Report(T value)
+    {
+        bool shouldReport;
+        lock (_gate)
+        {
+            _latest = value;
+            _hasPending = true;
+            var now = _clock.ElapsedMilliseconds;
+            shouldReport = !_hasReported || now - _lastReportMs >= _intervalMs;
+            if (shouldReport)
+            {
+                _hasReported = true;
+                _lastReportMs = now;
+                _hasPending = false;
+            }
+        }
+        if (shouldReport) _inner.Report(value);
+    }
+
+    public void Flush()
+    {
+        T? value = default;
+        lock (_gate)
+        {
+            if (!_hasPending) return;
+            _hasPending = false;
+            value = _latest;
+        }
+        if (value is not null) _inner.Report(value);
+    }
+}
+
+/// <summary>
 /// §4 重复文件：大小分组 → 采样哈希筛除 → SHA-256 全量哈希。
 /// 删除前必须对候选项重新计算 SHA-256 并复核 FileId / 大小 / 时间戳。
 /// </summary>
@@ -26,7 +79,14 @@ public sealed class DuplicateFinderService
         long minSize,
         IProgress<DuplicateScanProgress>? progress,
         CancellationToken token)
-        => Task.Run(() => ScanCore(root, minSize, progress, token), token);
+        => Task.Run(() =>
+        {
+            // 逐文件进度合并为 180ms 批量上报，避免大批量候选淹没 Dispatcher 队列。
+            var throttled = progress is null ? null
+                : new ThrottledProgress<DuplicateScanProgress>(progress, 180);
+            try { return ScanCore(root, minSize, throttled, token); }
+            finally { throttled?.Flush(); }
+        }, token);
 
     private DuplicateScanResult ScanCore(
         string root,
@@ -238,7 +298,8 @@ public sealed class DuplicateFinderService
     }
 
     /// <summary>生成删除计划前的严格校验：重新计算 SHA-256，并复核身份与时间戳。</summary>
-    public DuplicateVerificationResult VerifyForDelete(DuplicateGroup group, IReadOnlyList<string> paths)
+    public DuplicateVerificationResult VerifyForDelete(
+        DuplicateGroup group, IReadOnlyList<string> paths, CancellationToken token = default)
     {
         var verified = new List<DuplicateFile>();
         var rejected = new List<string>();
@@ -246,6 +307,8 @@ public sealed class DuplicateFinderService
 
         foreach (var path in paths)
         {
+            // 大文件校验放在后台线程执行，必须能被查重页的「取消」中止。
+            token.ThrowIfCancellationRequested();
             var file = group.Files.FirstOrDefault(f => string.Equals(f.Path, path, StringComparison.OrdinalIgnoreCase));
             if (file is null)
             {
@@ -271,7 +334,7 @@ public sealed class DuplicateFinderService
                 continue;
             }
 
-            var hash = TryHashFull(path, CancellationToken.None);
+            var hash = TryHashFull(path, token);
             if (hash is null || !string.Equals(hash, group.FullHash, StringComparison.OrdinalIgnoreCase))
             {
                 rejected.Add(path);

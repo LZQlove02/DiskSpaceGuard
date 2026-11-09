@@ -68,6 +68,61 @@ public sealed class CleanupRuleService
         return suggestions;
     }
 
+    /// <summary>
+    /// §14.2：返回「当前时刻仍命中规则」的具体文件路径。
+    /// 预演必须基于这份清单生成删除计划，不能把规则目录整体 recursive 展开——
+    /// 否则 MinAge 排除的活跃文件与规则目录本体都会进入计划（P0 误删路径）。
+    /// </summary>
+    public IReadOnlyList<string> GetMatchedFiles(CleanupSuggestion suggestion,
+        CancellationToken token = default)
+    {
+        var rule = _rules.FirstOrDefault(r =>
+            string.Equals(r.RuleId, suggestion.RuleId, StringComparison.Ordinal));
+        if (rule is null || !Directory.Exists(rule.TargetPattern)) return Array.Empty<string>();
+
+        var cutoff = DateTime.UtcNow - rule.MinAge;
+        var hits = new List<string>();
+
+        void Walk(string dir)
+        {
+            token.ThrowIfCancellationRequested();
+            if (hits.Count >= MaxItemsPerRule) return;
+
+            FileSystemInfo[] entries;
+            try { entries = new DirectoryInfo(dir).GetFileSystemInfos(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
+
+            foreach (var entry in entries)
+            {
+                token.ThrowIfCancellationRequested();
+                if (hits.Count >= MaxItemsPerRule) return;
+
+                FileAttributes attributes;
+                try { attributes = entry.Attributes; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+
+                if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
+                if ((attributes & FileAttributes.Directory) != 0) { Walk(entry.FullName); continue; }
+                if (entry.LastWriteTimeUtc > cutoff) continue;
+
+                // 比统计阶段更保守：受保护项不进入可删清单。
+                var level = _protection.Evaluate(entry.FullName, attributes, out _);
+                if (level is ProtectionLevel.L0 or ProtectionLevel.L1 or ProtectionLevel.L4) continue;
+
+                hits.Add(entry.FullName);
+            }
+        }
+
+        try { Walk(rule.TargetPattern); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Cleanup rule {rule.RuleId} matched-files failed: {ex}");
+        }
+
+        return hits;
+    }
+
     private CleanupSuggestion Measure(CleanupRule rule, CancellationToken token)
     {
         long bytes = 0;

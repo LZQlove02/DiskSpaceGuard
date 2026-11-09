@@ -116,6 +116,8 @@ public sealed class DeleteService
                 if (!recursive || node.Kind != NodeKind.Directory || !node.IsScanned) continue;
 
                 var normalized = ProtectionEvaluator.Normalize(node.FullPath);
+                // UNC / 设备前缀等不可信路径不得进入递归展开（会触发网络访问）。
+                if (normalized.Length == 0) continue;
                 // 父目录已被选中时不再重复展开子目录。
                 if (selectedRoots.Any(r => ProtectionEvaluator.IsUnder(normalized, r))) continue;
 
@@ -233,7 +235,8 @@ public sealed class DeleteService
     private bool TryAddFile(string path, List<DeleteItem> items, HashSet<string> seen, ref int id)
     {
         var normalized = ProtectionEvaluator.Normalize(path);
-        if (seen.Contains(normalized)) return false;
+        // 无法规范化的路径（UNC / 设备前缀 / ADS）一律不进入删除计划。
+        if (normalized.Length == 0 || seen.Contains(normalized)) return false;
 
         FileAttributes attributes;
         long size;
@@ -270,6 +273,9 @@ public sealed class DeleteService
 
     private DeleteItem? CreateDirectoryItem(string path, ref int id)
     {
+        var normalized = ProtectionEvaluator.Normalize(path);
+        if (normalized.Length == 0) return null;
+
         FileAttributes attributes;
         DateTime lastWrite;
         try
@@ -290,7 +296,7 @@ public sealed class DeleteService
         return new DeleteItem(
             ++id,
             path,
-            ProtectionEvaluator.Normalize(path),
+            normalized,
             0,
             lastWrite,
             hasIdentity ? identity.VolumeSerial : 0,
@@ -361,7 +367,20 @@ public sealed class DeleteService
         IProgress<DeleteItemResult>? progress,
         CancellationToken token)
     {
-        return Task.Run(() => ExecuteCore(plan, state, progress, token), CancellationToken.None);
+        return Task.Run(() =>
+        {
+            // 大计划逐项 Report 会淹没 UI；合并为 100ms 批量上报，收尾补发终值。
+            var throttled = progress is null ? null
+                : new ThrottledProgress<DeleteItemResult>(progress, 100);
+            // 崩溃 / 断电时保留「进行中计划」，重启后可提示哪些项结果未知（不改主台账格式）。
+            ActivePlanFile.Write(plan);
+            try { return ExecuteCore(plan, state, throttled, token); }
+            finally
+            {
+                throttled?.Flush();
+                ActivePlanFile.Clear(plan.PlanId);
+            }
+        }, CancellationToken.None);
     }
 
     private DeleteResult ExecuteCore(
@@ -507,7 +526,8 @@ public sealed class DeleteService
                 {
                     var (outcome, message) = FileIdentityService.VerifyAndDelete(
                         item.NormalizedPath, item.SnapshotSize, item.VolumeSerial, item.FileId,
-                        ignoreReadOnly: false, isDirectory: item.Kind == DeleteItemKind.Directory);
+                        ignoreReadOnly: false, isDirectory: item.Kind == DeleteItemKind.Directory,
+                        expectedLastWriteUtc: item.SnapshotLastWriteUtc);
 
                     switch (outcome)
                     {
@@ -548,6 +568,18 @@ public sealed class DeleteService
                     }
 
                     if (!string.Equals(current.ToPlanString(), item.FileId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Emit(new DeleteItemResult(item.ItemId, item.DisplayPath,
+                            ItemOutcome.Skipped, VerifyState.Changed, Text("Exec.Skip.Changed")));
+                        skipped++;
+                        state.Outcome[item.ItemId] = ItemOutcome.Skipped;
+                        continue;
+                    }
+
+                    // 回收站模式按路径操作，无法绑定句柄；至少复核时间戳，
+                    // 避免预演后内容被就地覆写（同 FileId、同尺寸）仍被移入回收站。
+                    var currentWrite = File.GetLastWriteTimeUtc(item.NormalizedPath);
+                    if (Math.Abs((currentWrite - item.SnapshotLastWriteUtc).TotalSeconds) > 2)
                     {
                         Emit(new DeleteItemResult(item.ItemId, item.DisplayPath,
                             ItemOutcome.Skipped, VerifyState.Changed, Text("Exec.Skip.Changed")));
@@ -697,3 +729,62 @@ public sealed record PlanBuildReport(
     int DirectoryCount,
     int ReparseSkipped,
     int UnreadableDirectories);
+
+/// <summary>
+/// T25 / §14.7：删除开始前留一份「进行中计划」；崩溃或断电后重启仍能提示
+/// 「上次执行未完成，以下 N 项结果未知」。正常收尾即删除，主台账 JSONL 格式不变。
+/// </summary>
+public static class ActivePlanFile
+{
+    internal static string FilePath { get; set; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "DiskSpaceGuard", "cleanup-plan-active.json");
+
+    public sealed record Snapshot(Guid PlanId, DateTime StartedUtc, IReadOnlyList<string> Paths);
+
+    public static void Write(DeletePlan plan)
+    {
+        try
+        {
+            var snapshot = new Snapshot(plan.PlanId, DateTime.UtcNow,
+                plan.Items.Select(i => i.DisplayPath).ToList());
+            var json = JsonSerializer.Serialize(snapshot);
+            var dir = Path.GetDirectoryName(FilePath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            var tmp = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, FilePath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Cannot write active plan marker: {ex.Message}");
+        }
+    }
+
+    public static Snapshot? Read()
+    {
+        try
+        {
+            if (!File.Exists(FilePath)) return null;
+            return JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(FilePath));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
+    }
+
+    public static void Clear(Guid planId)
+    {
+        try
+        {
+            var current = Read();
+            if (current is null || current.PlanId != planId) return;
+            File.Delete(FilePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Cannot clear active plan marker: {ex.Message}");
+        }
+    }
+}

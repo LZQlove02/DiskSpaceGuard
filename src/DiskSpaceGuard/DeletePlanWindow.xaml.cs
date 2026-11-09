@@ -183,9 +183,10 @@ public partial class DeletePlanWindow : Window
         ExecProgress.Value = 0;
         ExecStatus.Text = F("Plan.ExecProgress", 0, _plan.Items.Count);
 
-        var progress = new Progress<DeleteItemResult>(_ =>
+        // 进度已被节流，不能按回调次数累加；改用结果自带的 ItemId 保持计数准确。
+        var progress = new Progress<DeleteItemResult>(r =>
         {
-            _execProcessed++;
+            _execProcessed = Math.Max(_execProcessed, r.ItemId);
             ExecProgress.Value = _execProcessed;
             ExecStatus.Text = F("Plan.ExecProgress", _execProcessed, _plan.Items.Count);
         });
@@ -195,6 +196,10 @@ public partial class DeletePlanWindow : Window
         try
         {
             Result = await _service.ExecuteAsync(_plan, state, progress, _execCts.Token);
+            // 节流可能让最后一次回调尚未到达，收尾时把进度补到终值。
+            _execProcessed = _plan.Items.Count;
+            ExecProgress.Value = _execProcessed;
+            ExecStatus.Text = F("Plan.ExecProgress", _execProcessed, _plan.Items.Count);
         }
         finally
         {

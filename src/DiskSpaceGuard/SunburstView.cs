@@ -89,7 +89,7 @@ public sealed class SunburstView : FrameworkElement
                 var mid = (start + end) / 2;
                 var radius = (r0 + r1) / 2;
                 var point = new Point(center.X + radius * Math.Cos(mid), center.Y + radius * Math.Sin(mid));
-                var text = MakeText(Trim(node.Name, 8), 10, Brushes.White);
+                var text = MakeText(Trim(node.Name, 8), 10, VisualColors.TextBrushFor(color));
                 text.MaxTextWidth = Math.Max(20, r1 - r0 - 6);
                 dc.DrawText(text, new Point(point.X - text.Width / 2, point.Y - text.Height / 2));
             }

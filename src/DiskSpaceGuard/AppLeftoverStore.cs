@@ -80,37 +80,37 @@ public static class AppLeftoverStore
         }
     }
 
-    /// <summary>拒绝共享根目录、Windows 目录与用户配置根，避免把公共位置当成残留。</summary>
+    /// <summary>
+    /// 拒绝共享根本身、Windows 目录与不可信路径形态。
+    /// app-leftovers.json 可被同用户进程篡改，必须先剥离设备前缀并拒绝 UNC / 卷 GUID / ADS，
+    /// 否则可构造指向系统目录的清理规则（配合 recursive 展开会进入删除计划）。
+    /// </summary>
     internal static bool IsSafeLocation(string path)
     {
         if (string.IsNullOrWhiteSpace(path)) return false;
-        try
-        {
-            var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
-            var root = Path.GetPathRoot(full)?.TrimEnd(Path.DirectorySeparatorChar) ?? string.Empty;
-            if (full.Length <= root.Length) return false;
-            if (AppCatalog.IsUnderWindows(full)) return false;
+        var full = ProtectionEvaluator.Normalize(path);
+        if (full.Length == 0) return false;
 
-            var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var shared = new[]
-            {
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                userProfile,
-                string.IsNullOrWhiteSpace(userProfile) ? string.Empty : Path.GetDirectoryName(userProfile) ?? string.Empty
-            };
+        var root = Path.GetPathRoot(full)?.TrimEnd(Path.DirectorySeparatorChar) ?? string.Empty;
+        if (root.Length < 2 || !char.IsLetter(root[0]) || root[1] != ':') return false;
+        if (full.Length <= root.Length) return false;
+        if (AppCatalog.IsUnderWindows(full)) return false;
 
-            return !shared.Any(s =>
-                !string.IsNullOrWhiteSpace(s) &&
-                string.Equals(full, Path.GetFullPath(s).TrimEnd(Path.DirectorySeparatorChar),
-                    StringComparison.OrdinalIgnoreCase));
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var shared = new[]
         {
-            return false;
-        }
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            userProfile,
+            string.IsNullOrWhiteSpace(userProfile) ? string.Empty : Path.GetDirectoryName(userProfile) ?? string.Empty
+        };
+
+        // 共享根本身不能当作残留；其子目录仍允许（真实应用残留多在 Program Files 下）。
+        return !shared.Any(s =>
+            !string.IsNullOrWhiteSpace(s) &&
+            string.Equals(full, ProtectionEvaluator.Normalize(s), StringComparison.OrdinalIgnoreCase));
     }
 }

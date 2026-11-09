@@ -317,12 +317,19 @@ public sealed class InstalledAppService
         var outputTask = process.StandardOutput.ReadToEndAsync();
         var errorTask = process.StandardError.ReadToEndAsync();
 
-        if (!process.WaitForExit(timeoutMilliseconds))
+        // 100ms 短等待循环：取消可及时响应，且不再长时间占用线程池线程。
+        var start = Environment.TickCount64;
+        while (!process.HasExited)
         {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
             token.ThrowIfCancellationRequested();
-            throw new TimeoutException("PowerShell timed out");
+            if (Environment.TickCount64 - start >= timeoutMilliseconds)
+            {
+                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                throw new TimeoutException("PowerShell timed out");
+            }
+            process.WaitForExit(100);
         }
+        token.ThrowIfCancellationRequested();
 
         Task.WaitAll(outputTask, errorTask);
         return (outputTask.Result, errorTask.Result, process.ExitCode);

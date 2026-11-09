@@ -5,7 +5,7 @@
         Title="{Binding [Rules.Title], Source={x:Static svc:Loc.Instance}}"
         Width="900" Height="600" MinWidth="760" MinHeight="480"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
-        Background="{StaticResource WindowBrush}" FontFamily="Microsoft YaHei UI" FontSize="13">
+        Background="{StaticResource WindowBrush}" FontFamily="{StaticResource UiFontFamily}" FontSize="13">
   <Grid Margin="22">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
@@ -23,10 +23,10 @@
 
     <Grid Grid.Row="2" Margin="0,14,0,10">
       <StackPanel Orientation="Horizontal">
-        <Button Content="{Binding [Rules.Reload], Source={x:Static svc:Loc.Instance}}" Click="Reload_Click" Padding="14,7" Background="{StaticResource SoftBrush}"
+        <Button Content="{Binding [Rules.Reload], Source={x:Static svc:Loc.Instance}}" Click="Reload_Click" Margin="0" Padding="14,7" Background="{StaticResource SoftBrush}"
                 Foreground="{StaticResource AccentBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
         <Button x:Name="PreviewButton" Content="{Binding [Rules.Preview], Source={x:Static svc:Loc.Instance}}" Click="Preview_Click" Margin="10,0,0,0"
-                Padding="14,7" Background="{StaticResource AccentBrush}" Foreground="White" BorderThickness="0"
+                Padding="14,7" Background="{StaticResource AccentBrush}" Foreground="{StaticResource OnAccentBrush}" BorderThickness="0"
                 IsEnabled="False" Cursor="Hand"/>
       </StackPanel>
       <TextBlock x:Name="StatusText" HorizontalAlignment="Right" VerticalAlignment="Center"

@@ -32,6 +32,9 @@ public static class FileIdentityService
     private const uint DispositionPosixSemantics = 0x2;
     private const uint DispositionIgnoreReadOnly = 0x10;
 
+    // 2 秒容差：NTFS 的 FILETIME 精确到 100ns，FAT/exFAT 只有 2 秒粒度。
+    private const long LastWriteToleranceFileTime = 2L * 10_000_000L;
+
     // 原生 FILE_ID_INFO：DWORD VolumeSerialNumber + FILE_ID_128（16 字节）= 20 字节。
     // 实测 GetFileInformationByHandleEx(FileIdInfo) 拒绝 20–23 字节缓冲（ERROR_BAD_LENGTH），
     // 要求 ≥24 字节但只写入前 20 字节：Pack=4 保证字段偏移与原生一致，末尾 4 字节为填充。
@@ -66,6 +69,13 @@ public static class FileIdentityService
         int fileInformationClass,
         out FileIdInfo lpFileInformation,
         uint dwBufferSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileTime(
+        SafeFileHandle hFile,
+        out long lpCreationTime,
+        out long lpLastAccessTime,
+        out long lpLastWriteTime);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetFileInformationByHandle(
@@ -108,12 +118,12 @@ public static class FileIdentityService
     }
 
     /// <summary>
-    /// 打开句柄 → 校验身份与快照 → 通过同一句柄删除。
-    /// 身份不一致时返回 Changed，不执行删除。
+    /// 打开句柄 → 校验身份、大小与时间戳 → 通过同一句柄删除。
+    /// 任一快照项不一致时返回 Changed，不执行删除。
     /// </summary>
     public static (VerifyOutcome Outcome, string Message) VerifyAndDelete(
         string path, long expectedSize, ulong expectedVolumeSerial, string expectedFileId,
-        bool ignoreReadOnly, bool isDirectory = false)
+        bool ignoreReadOnly, bool isDirectory = false, DateTime expectedLastWriteUtc = default)
     {
         using var handle = CreateFileW(path, DeleteAccess | GenericRead, ShareAll, IntPtr.Zero,
             OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint, IntPtr.Zero);
@@ -132,6 +142,17 @@ public static class FileIdentityService
         if (identity.VolumeSerial != expectedVolumeSerial ||
             !string.Equals(identity.ToPlanString(), expectedFileId, StringComparison.OrdinalIgnoreCase))
             return (VerifyOutcome.Changed, "对象身份已变化，已跳过");
+
+        // 时间戳必须从句柄读取，不再按路径二次 stat（§3.2 检查表 / T17）。
+        if (expectedLastWriteUtc != default && !isDirectory)
+        {
+            if (!GetFileTime(handle, out _, out _, out var lastWriteFileTime))
+                return (VerifyOutcome.Unverifiable, "无法从句柄读取时间戳，已跳过");
+
+            var expectedFileTime = expectedLastWriteUtc.ToFileTimeUtc();
+            if (Math.Abs(lastWriteFileTime - expectedFileTime) > LastWriteToleranceFileTime)
+                return (VerifyOutcome.Changed, "时间戳与计划不一致，已跳过");
+        }
 
         try
         {

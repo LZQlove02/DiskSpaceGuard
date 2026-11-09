@@ -80,8 +80,14 @@ public static class CleanupLedgerCsv
             .AppendLine();
     }
 
+    /// <summary>CSV 字段转义；公式字符开头时加单引号，防止 Excel/WPS 打开文件时执行公式。</summary>
     private static string Field(string value)
-        => "\"" + value.Replace("\"", "\"\"") + "\"";
+    {
+        var escaped = value.Replace("\"", "\"\"");
+        if (escaped.Length > 0 && escaped[0] is '=' or '+' or '-' or '@' or '\t' or '\r')
+            escaped = "'" + escaped;
+        return "\"" + escaped + "\"";
+    }
 }
 
 /// <summary>读取 JSONL 清理台账；损坏行跳过并计数，不影响其余记录。</summary>
@@ -91,25 +97,29 @@ public static class CleanupLedgerReader
     {
         if (!File.Exists(path))
             return new CleanupLedgerReadResult(Array.Empty<CleanupLedgerEntry>(), 0, null);
+        if (maxEntries <= 0) maxEntries = 1;
 
         try
         {
-            var lines = new List<string>();
+            // 流式环形队列：只保留尾部 maxEntries 行，避免整文件 List + Skip().ToList() 的双份内存。
+            const int MaxLineChars = 8 * 1024 * 1024;
+            var window = new Queue<string>();
+            var skipped = 0;
             using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             using (var reader = new StreamReader(stream, Encoding.UTF8))
             {
                 string? line;
                 while ((line = reader.ReadLine()) is not null)
                 {
-                    if (!string.IsNullOrWhiteSpace(line)) lines.Add(line);
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    if (line.Length > MaxLineChars) { skipped++; continue; }
+                    if (window.Count == maxEntries) window.Dequeue();
+                    window.Enqueue(line);
                 }
             }
 
-            if (lines.Count > maxEntries) lines = lines.Skip(lines.Count - maxEntries).ToList();
-
             var entries = new List<CleanupLedgerEntry>();
-            var skipped = 0;
-            foreach (var line in lines)
+            foreach (var line in window)
             {
                 try
                 {
