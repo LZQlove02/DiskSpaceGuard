@@ -208,6 +208,11 @@ public static class LocalizationService
         ["Chart.Downgraded"] = ("本层 {0:N0} 项超限 · 已降级为条形图", "Level has {0:N0} items · downgraded to bars"),
         ["Chart.Summary"] = ("本层 {0:N0} 项 · 全树 {1:N0} 节点 · 面积=逻辑大小",
             "Level: {0:N0} items · Tree: {1:N0} nodes · Area = logical size"),
+        ["Chart.Empty"] = ("无子项", "No items"),
+        ["Chart.RestCount"] = ("其余 {0:N0} 项", "{0:N0} more items"),
+        ["Chart.RestSummary"] = ("其余 {0:N0} 项：{1}", "Other {0:N0} items: {1}"),
+        ["Chart.Truncated"] = ("已超过 {0:N0} 块，深层已折叠", "More than {0:N0} blocks; deeper levels collapsed"),
+        ["Chart.SmallFiles"] = ("{0:N0} 项小于 1 MB", "{0:N0} items smaller than 1 MB"),
 
         // 托盘
         ["Tray.Tip"] = ("DiskSpaceGuard · 磁盘空间管家", "DiskSpaceGuard · Disk Space Manager"),
@@ -416,6 +421,8 @@ public static class LocalizationService
         ["Restore.AlreadyExists"] = ("原位置已存在同名对象，未执行还原", "An object already exists at the original path; restore skipped"),
         ["Restore.ShellUnavailable"] = ("系统 Shell 不可用，无法还原", "System shell unavailable; cannot restore"),
         ["Restore.Done"] = ("已还原", "Restored"),
+        ["Restore.IdentityMismatch"] = ("已还原，但对象身份与台账不一致（可能还原了同名对象），请人工核对",
+            "Restored, but the object identity does not match the ledger (a same-named object may have been restored). Please verify manually"),
         ["Ledger.IncompleteRun"] = ("上次执行未完成：{0} 项结果未知，请核对台账", "Incomplete run: {0} items have unknown outcome; please verify the ledger"),
 
         // 执行结果明细
@@ -425,6 +432,8 @@ public static class LocalizationService
         ["Exec.Fatal.Duplicate"] = ("该计划已执行过，拒绝重复执行", "This plan was already executed; duplicate execution refused"),
         ["Exec.Fatal.Cancelled"] = ("执行已取消，已处理项见结果", "Execution cancelled; see processed items"),
         ["Exec.Fatal.Interrupted"] = ("执行中断：{0}", "Execution interrupted: {0}"),
+        ["Exec.Fatal.VolumeChanged"] = ("目标卷状态已变化（设备断开或重新挂载），已中止剩余项，请重新预演",
+            "Target volume is no longer available; remaining items were aborted. Please preview again"),
         ["Exec.Skip.L0"] = ("L0 硬禁止，未执行", "L0 blocked; not executed"),
         ["Exec.Skip.Reparse"] = ("重解析点，不穿透", "Reparse point; not followed"),
         ["Exec.Skip.Custom"] = ("自定义保护目录", "Custom protected folder"),
@@ -439,6 +448,10 @@ public static class LocalizationService
         ["Exec.Skip.Changed"] = ("身份已变化，已跳过", "Identity changed; skipped"),
         ["Exec.Recycled"] = ("已移入回收站（延迟释放）", "Moved to the recycle bin (delayed release)"),
         ["Exec.RecycleFailedSuffix"] = ("（未改为永久删除）", "(not switched to permanent deletion)"),
+        ["Exec.RecycleUnverified"] = ("在回收站中未能找到该条目，可能未进入回收站或对象已被替换，请人工核对",
+            "Item was not found in the recycle bin; it may have been permanently deleted or replaced. Please check manually"),
+        ["Exec.RecycleVerifyUnavailable"] = ("已移出原位置，但无法枚举回收站复核，请人工核对",
+            "Moved from its original location, but the recycle bin could not be enumerated for verification. Please check manually"),
 
         // 扫描过程消息
         ["Scan.Phase.Quick"] = ("快速预览", "Quick preview"),

@@ -8,6 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>DiskSpaceGuard</AssemblyName>
     <RootNamespace>DiskSpaceGuard</RootNamespace>
+    <Version>1.0.4</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <!-- DPI 由 WPF 的 app.manifest（PerMonitorV2）负责；WinForms 仅用于托盘图标。 -->

@@ -22,6 +22,9 @@ public sealed class ScanService
 
     private const int ReportIntervalMs = 180;
 
+    /// <summary>递归目录树的深度上限；防止极深目录导致 StackOverflow（不可捕获）。</summary>
+    private const int MaxTreeDepth = 256;
+
     /// <summary>小于该值的文件不单独建节点，见 §2.6 内存剪枝。</summary>
     public long AggregateThresholdBytes { get; set; } = 1024 * 1024;
 
@@ -154,7 +157,7 @@ public sealed class ScanService
             if (_mode == ScanMode.FastThenFull)
             {
                 _phase = Text("Scan.Phase.Quick");
-                ScanDirectory(_rootPath, 0, _shallowDepth, _root);
+                ScanDirectory(_rootPath, 0, Math.Min(_shallowDepth, MaxTreeDepth), _root);
                 Report(force: true);
 
                 // 第二阶段开始前冻结浅层结果：取消时回退到这份“已完成”的数据，而不是空树。
@@ -164,14 +167,14 @@ public sealed class ScanService
                 ResetCounters();
                 _phase = Text("Scan.Phase.Full");
                 _root = new ScanNode(displayName, _rootPath, NodeKind.Directory);
-                ScanDirectory(_rootPath, 0, int.MaxValue, _root);
+                ScanDirectory(_rootPath, 0, MaxTreeDepth, _root);
             }
             else
             {
                 _phase = _mode == ScanMode.Shallow
                     ? string.Format(Text("Scan.Phase.Shallow"), _shallowDepth)
                     : Text("Scan.Phase.FullRecursive");
-                ScanDirectory(_rootPath, 0, _mode == ScanMode.Shallow ? _shallowDepth : int.MaxValue, _root);
+                ScanDirectory(_rootPath, 0, _mode == ScanMode.Shallow ? _shallowDepth : MaxTreeDepth, _root);
             }
 
             _machine.Transition(ScanTaskState.Completed);

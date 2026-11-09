@@ -66,6 +66,9 @@ public sealed class DeleteService
 
     private const int MaxPlanItems = 50_000;
 
+    /// <summary>递归目录树的深度上限；防止极深目录导致 StackOverflow（不可捕获）。</summary>
+    private const int MaxTreeDepth = 256;
+
     /// <summary>默认只接受文件；目录递归需显式开启（T18）。</summary>
     public DeletePlan BuildPlan(IReadOnlyList<ScanNode> nodes, DeleteMode mode, string rootHint)
         => BuildPlan(nodes, mode, rootHint, recursive: false);
@@ -130,7 +133,7 @@ public sealed class DeleteService
 
                 selectedRoots.Add(normalized);
                 WalkDirectory(node.FullPath, items, seen, ref id, ref files, ref dirs,
-                    ref reparse, ref unreadable, token);
+                    ref reparse, ref unreadable, 0, token);
 
                 var dirItem = CreateDirectoryItem(node.FullPath, ref id);
                 if (dirItem is not null && seen.Add(dirItem.NormalizedPath))
@@ -179,8 +182,15 @@ public sealed class DeleteService
         ref int dirs,
         ref int reparse,
         ref int unreadable,
+        int depth,
         CancellationToken token)
     {
+        if (depth > MaxTreeDepth)
+        {
+            unreadable++;
+            return;
+        }
+
         token.ThrowIfCancellationRequested();
 
         FileSystemInfo[] entries;
@@ -217,7 +227,7 @@ public sealed class DeleteService
             if ((attributes & FileAttributes.Directory) != 0)
             {
                 WalkDirectory(entry.FullName, items, seen, ref id, ref files, ref dirs,
-                    ref reparse, ref unreadable, token);
+                    ref reparse, ref unreadable, depth + 1, token);
                 var dirItem = CreateDirectoryItem(entry.FullName, ref id);
                 if (dirItem is not null && seen.Add(dirItem.NormalizedPath))
                 {
@@ -254,8 +264,15 @@ public sealed class DeleteService
             return false;
         }
 
-        var level = _protection.Evaluate(path, attributes, out var reasonKey);
-        var hasIdentity = FileIdentityService.TryReadIdentity(path, out var identity, out _);
+        // 删除计划同时核对身份与最终落点：字面路径经 junction 祖先可达 L0 系统目录。
+        var hasIdentity = FileIdentityService.TryReadIdentityWithFinalPath(
+            path, out var identity, out var finalPath, out _);
+        ProtectionLevel level;
+        string reasonKey;
+        if (hasIdentity)
+            level = _protection.EvaluateWithFinalPath(path, attributes, finalPath, out reasonKey);
+        else
+            level = _protection.Evaluate(path, attributes, out reasonKey);
 
         seen.Add(normalized);
         items.Add(new DeleteItem(
@@ -290,8 +307,14 @@ public sealed class DeleteService
             return null;
         }
 
-        var level = _protection.Evaluate(path, attributes, out var reasonKey);
-        var hasIdentity = FileIdentityService.TryReadIdentity(path, out var identity, out _);
+        var hasIdentity = FileIdentityService.TryReadIdentityWithFinalPath(
+            path, out var identity, out var finalPath, out _);
+        ProtectionLevel level;
+        string reasonKey;
+        if (hasIdentity)
+            level = _protection.EvaluateWithFinalPath(path, attributes, finalPath, out reasonKey);
+        else
+            level = _protection.Evaluate(path, attributes, out reasonKey);
 
         return new DeleteItem(
             ++id,
@@ -428,14 +451,20 @@ public sealed class DeleteService
         var recycled = 0;
         var skipped = 0;
         var failed = 0;
+        var volumeUnavailable = false;
         var plannedPaths = new HashSet<string>(
             plan.Items.Select(i => i.NormalizedPath), StringComparer.OrdinalIgnoreCase);
+        // 已成功交给 Shell 的条目，执行结束后统一到回收站复核一次。
+        var recycleCandidates = new List<(DeleteItemResult Result, string Path)>();
+        // 逐条落盘：崩溃/断电时已完成的条目仍有台账可查。
+        using var ledgerWriter = TryOpenLedgerWriter();
 
         // 统一出口：逐项结果（含各类跳过）都立即上报，保证“已处理 X/Y”进度不缺计数。
         void Emit(DeleteItemResult r)
         {
             results.Add(r);
             progress?.Report(r);
+            WriteItemRecord(ledgerWriter, plan.PlanId, r);
         }
 
         try
@@ -547,6 +576,13 @@ public sealed class DeleteService
                                 ItemOutcome.Skipped, VerifyState.Missing, message);
                             skipped++;
                             break;
+                        case FileIdentityService.VerifyOutcome.VolumeUnavailable:
+                            // 卷已断开/重新挂载：中止整份计划，避免在失效路径上继续操作。
+                            result = new DeleteItemResult(item.ItemId, item.DisplayPath,
+                                ItemOutcome.Failed, VerifyState.Unverifiable, message);
+                            failed++;
+                            volumeUnavailable = true;
+                            break;
                         default:
                             result = new DeleteItemResult(item.ItemId, item.DisplayPath,
                                 ItemOutcome.Failed, VerifyState.Unverifiable, message);
@@ -560,6 +596,16 @@ public sealed class DeleteService
                     FileIdentityService.TryReadIdentity(item.NormalizedPath, out var current, out var identityError);
                     if (!current.IsValid)
                     {
+                        if (!IsVolumeReady(item.NormalizedPath))
+                        {
+                            Emit(new DeleteItemResult(item.ItemId, item.DisplayPath,
+                                ItemOutcome.Failed, VerifyState.Unverifiable,
+                                Text("Exec.Fatal.VolumeChanged")));
+                            failed++;
+                            fatal = Text("Exec.Fatal.VolumeChanged");
+                            break;
+                        }
+
                         Emit(new DeleteItemResult(item.ItemId, item.DisplayPath,
                             ItemOutcome.Skipped, VerifyState.Missing, identityError));
                         skipped++;
@@ -593,6 +639,7 @@ public sealed class DeleteService
                         result = new DeleteItemResult(item.ItemId, item.DisplayPath,
                             ItemOutcome.MovedToRecycleBin, VerifyState.Matched, Text("Exec.Recycled"));
                         recycled++;
+                        recycleCandidates.Add((result, item.NormalizedPath));
                     }
                     else
                     {
@@ -607,6 +654,12 @@ public sealed class DeleteService
                 state.Outcome[item.ItemId] = result.Outcome;
                 if (!string.IsNullOrEmpty(result.Message)) state.Messages[item.ItemId] = result.Message;
                 Emit(result);
+
+                if (volumeUnavailable)
+                {
+                    fatal = Text("Exec.Fatal.VolumeChanged");
+                    break;
+                }
             }
         }
         catch (OperationCanceledException)
@@ -618,13 +671,103 @@ public sealed class DeleteService
             fatal = string.Format(Text("Exec.Fatal.Interrupted"), ex.Message);
         }
 
+        // 回收站模式只按路径操作：移动成功后必须到回收站复核。
+        // 无法在回收站中找到 → 不得记成功（可能被 Shell 永久删除或移动了错误对象）。
+        VerifyRecycleCandidates(plan, results, recycleCandidates, state, progress, ledgerWriter,
+            ref recycled, ref failed);
+
         clock.Stop();
         var summary = new DeleteResult(plan.PlanId, plan.Mode, plan.Items.Count, deleted, recycled,
             skipped, failed, plan.EstimatedLogicalBytes, deletedBytes, clock.Elapsed, fatal,
             freeBefore, ReadFreeBytes(plan));
 
-        WriteLedger(plan, summary, results);
+        WriteLedger(plan, summary, results, ledgerWriter);
         return summary;
+    }
+
+    private static void VerifyRecycleCandidates(
+        DeletePlan plan,
+        List<DeleteItemResult> results,
+        IReadOnlyList<(DeleteItemResult Result, string Path)> candidates,
+        DeleteRunState state,
+        IProgress<DeleteItemResult>? progress,
+        StreamWriter? ledgerWriter,
+        ref int recycled,
+        ref int failed)
+    {
+        if (plan.Mode != DeleteMode.RecycleFirst || candidates.Count == 0) return;
+
+        // 复核失败（COM 不可用）不能让已完成的删除结果失真，但必须标注“无法复核”。
+        // Shell 对回收站条目的可见性可能略滞后，最多重试 3 次再下结论。
+        HashSet<string>? verified = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                verified = RecycleBinRestoreService.TryCollectRecycledPaths(
+                    candidates.Select(c => c.Path), CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Recycle verification failed: {ex.Message}");
+                verified = null;
+            }
+
+            if (verified is null) break;
+            if (candidates.All(c => verified.Contains(c.Path))) break;
+            if (attempt < 2) Thread.Sleep(150);
+        }
+
+        foreach (var (original, path) in candidates)
+        {
+            var index = results.FindIndex(r => r.ItemId == original.ItemId);
+            if (index < 0) continue;
+
+            if (verified is null)
+            {
+                var unverified = original with
+                {
+                    Verify = VerifyState.Unverifiable,
+                    Message = Text("Exec.RecycleVerifyUnavailable")
+                };
+                results[index] = unverified;
+                state.Verify[unverified.ItemId] = VerifyState.Unverifiable;
+                state.Messages[unverified.ItemId] = unverified.Message;
+                WriteItemRecord(ledgerWriter, plan.PlanId, unverified);
+                continue;
+            }
+
+            if (verified.Contains(path)) continue;
+
+            var corrected = original with
+            {
+                Outcome = ItemOutcome.Failed,
+                Verify = VerifyState.Unverifiable,
+                Message = Text("Exec.RecycleUnverified")
+            };
+            results[index] = corrected;
+            state.Outcome[corrected.ItemId] = ItemOutcome.Failed;
+            state.Verify[corrected.ItemId] = VerifyState.Unverifiable;
+            state.Messages[corrected.ItemId] = corrected.Message;
+            recycled--;
+            failed++;
+            WriteItemRecord(ledgerWriter, plan.PlanId, corrected);
+            progress?.Report(corrected);
+        }
+    }
+
+    /// <summary>卷是否仍可用；无法判定时返回 true，交给逐项校验处理。</summary>
+    private static bool IsVolumeReady(string path)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(path);
+            return string.IsNullOrEmpty(root) || new DriveInfo(root).IsReady;
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException or UnauthorizedAccessException)
+        {
+            return true;
+        }
     }
 
     /// <summary>目录删除前检查直接子项：是否都是计划内对象、是否都已删除。</summary>
@@ -669,10 +812,59 @@ public sealed class DeleteService
         }
     }
 
-    private void WriteLedger(DeletePlan plan, DeleteResult summary, IReadOnlyList<DeleteItemResult> results)
+    /// <summary>以追加方式打开台账，供执行期逐条写入；失败时返回 null，不影响删除本身。</summary>
+    private StreamWriter? TryOpenLedgerWriter()
     {
         try
         {
+            var dir = Path.GetDirectoryName(_ledgerPath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            return new StreamWriter(
+                new FileStream(_ledgerPath, FileMode.Append, FileAccess.Write, FileShare.Read),
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+            {
+                AutoFlush = true
+            };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Ledger open failed: {ex}");
+            return null;
+        }
+    }
+
+    /// <summary>逐条结果先落盘；崩溃后即使没有汇总行，也能还原已处理的条目。</summary>
+    private static void WriteItemRecord(StreamWriter? writer, Guid planId, DeleteItemResult result)
+    {
+        if (writer is null) return;
+        try
+        {
+            writer.WriteLine(JsonSerializer.Serialize(new
+            {
+                schema = PlanHasher.SchemaVersion,
+                recordType = "item",
+                planId,
+                executedUtc = DateTime.UtcNow,
+                itemId = result.ItemId,
+                path = result.Path,
+                outcome = result.Outcome.ToString(),
+                verify = result.Verify.ToString(),
+                message = result.Message
+            }));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException)
+        {
+            Debug.WriteLine($"Ledger item write failed: {ex}");
+        }
+    }
+
+    private void WriteLedger(DeletePlan plan, DeleteResult summary, IReadOnlyList<DeleteItemResult> results,
+        StreamWriter? writer)
+    {
+        try
+        {
+            // 台账保存对象身份，供还原时核对“还原的是不是同一个对象”。
+            var identities = plan.Items.ToDictionary(i => i.ItemId, i => (i.FileId, i.VolumeSerial));
             var record = new
             {
                 schema = PlanHasher.SchemaVersion,
@@ -689,17 +881,36 @@ public sealed class DeleteService
                 estimatedBytes = summary.EstimatedBytes,
                 actualBytes = summary.ActualBytes,
                 fatal = summary.FatalMessage,
-                items = results.Select(r => new
+                items = results.Select(r =>
                 {
-                    r.ItemId,
-                    path = r.Path,
-                    outcome = r.Outcome.ToString(),
-                    verify = r.Verify.ToString(),
-                    r.Message
+                    identities.TryGetValue(r.ItemId, out var identity);
+                    return new
+                    {
+                        r.ItemId,
+                        path = r.Path,
+                        outcome = r.Outcome.ToString(),
+                        verify = r.Verify.ToString(),
+                        r.Message,
+                        fileId = identity.FileId ?? string.Empty,
+                        volumeSerial = identity.VolumeSerial
+                    };
                 }).ToArray()
             };
 
             var line = JsonSerializer.Serialize(record);
+            if (writer is not null)
+            {
+                try
+                {
+                    writer.WriteLine(line);
+                    return;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException)
+                {
+                    Debug.WriteLine($"Ledger summary write failed: {ex}");
+                }
+            }
+
             File.AppendAllText(_ledgerPath, line + Environment.NewLine, Encoding.UTF8);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -742,6 +953,9 @@ public static class ActivePlanFile
 
     public sealed record Snapshot(Guid PlanId, DateTime StartedUtc, IReadOnlyList<string> Paths);
 
+    /// <summary>进行中快照是同用户可写文件，读写都限长，避免异常文件拖垮内存。</summary>
+    private const long MaxSnapshotBytes = 16L * 1024 * 1024;
+
     public static void Write(DeletePlan plan)
     {
         try
@@ -749,6 +963,11 @@ public static class ActivePlanFile
             var snapshot = new Snapshot(plan.PlanId, DateTime.UtcNow,
                 plan.Items.Select(i => i.DisplayPath).ToList());
             var json = JsonSerializer.Serialize(snapshot);
+            if (Encoding.UTF8.GetByteCount(json) > MaxSnapshotBytes)
+            {
+                Debug.WriteLine("Active plan snapshot too large; skipped.");
+                return;
+            }
             var dir = Path.GetDirectoryName(FilePath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
             var tmp = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -766,7 +985,9 @@ public static class ActivePlanFile
         try
         {
             if (!File.Exists(FilePath)) return null;
-            return JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(FilePath));
+            if (new FileInfo(FilePath).Length > MaxSnapshotBytes) return null;
+            return JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(FilePath),
+                new JsonSerializerOptions { MaxDepth = 32 });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.RegularExpressions;
+using DiskSpaceGuard.Models;
 
 namespace DiskSpaceGuard.Services;
 
@@ -13,7 +14,7 @@ public static class PrivacyRedactor
 
     // 卸载命令 / 日志中可能带 /PASSWORD=、-p、--token= 等凭据参数。
     private static readonly Regex CredentialArgument = new(
-        @"(/(?:PASSWORD|PASS|PWD|TOKEN|SECRET|KEY|APIKEY)=|--?(?:password|passwd|token|secret|api[-_]?key)\s*[= ])\s*([^\s""',;]+)",
+        @"(/(?:PASSWORD|PASS|PWD|TOKEN|SECRET|KEY|APIKEY)=|--?(?:password|passwd|token|secret|api[-_]?key)\s*[= ]|-p\s+)\s*([^\s""',;]+)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     public static string Redact(string text, string userName, string profilePath)
@@ -47,4 +48,19 @@ public static class PrivacyRedactor
     public static string RedactDefault(string text)
         => Redact(text, Environment.UserName,
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+
+    /// <summary>
+    /// 诊断导出时移除可直接识别设备的字段：序列号、固件版本与物理位置。
+    /// 型号、容量、健康度等诊断信息保留。
+    /// </summary>
+    public static HardwareSnapshot RedactHardware(HardwareSnapshot snapshot)
+        => snapshot with
+        {
+            Disks = snapshot.Disks.Select(disk => disk with
+            {
+                Serial = string.IsNullOrWhiteSpace(disk.Serial) ? string.Empty : "<serial>",
+                Firmware = string.IsNullOrWhiteSpace(disk.Firmware) ? string.Empty : "<firmware>",
+                Location = string.IsNullOrWhiteSpace(disk.Location) ? string.Empty : "<location>"
+            }).ToList()
+        };
 }

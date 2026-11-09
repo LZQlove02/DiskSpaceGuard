@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using DiskSpaceGuard.Models;
+using DiskSpaceGuard.Services;
 
 namespace DiskSpaceGuard.Controls;
 
@@ -60,7 +61,7 @@ public sealed class BarsView : FrameworkElement
         {
             if (child.LogicalSize <= 0) continue;
             if (heap.Count < shown) heap.Enqueue(child, child.LogicalSize);
-            else if (child.LogicalSize > heap.PeekPriority())
+            else if (heap.TryPeek(out _, out var smallest) && child.LogicalSize > smallest)
             {
                 rest.Add(heap.Dequeue());
                 heap.Enqueue(child, child.LogicalSize);
@@ -108,7 +109,8 @@ public sealed class BarsView : FrameworkElement
         if (rest.Count > 0 && y + rowHeight <= ActualHeight)
         {
             var restSize = rest.Sum(r => r.LogicalSize);
-            var text = MakeText($"其余 {rest.Count:N0} 项：{ScanNode.FormatBytes(restSize)}", 10.5,
+            var text = MakeText(string.Format(T("Chart.RestSummary"), rest.Count,
+                ScanNode.FormatBytes(restSize)), 10.5,
                 new SolidColorBrush(Color.FromRgb(0x6B, 0x72, 0x80)));
             dc.DrawText(text, new Point(4, y + 4));
         }
@@ -116,9 +118,11 @@ public sealed class BarsView : FrameworkElement
 
     private void DrawEmpty(DrawingContext dc)
     {
-        var text = MakeText("无子项", 12, VisualColors.MutedText);
+        var text = MakeText(T("Chart.Empty"), 12, VisualColors.MutedText);
         dc.DrawText(text, new Point(Math.Max(0, (ActualWidth - text.Width) / 2), Math.Max(0, (ActualHeight - text.Height) / 2)));
     }
+
+    private static string T(string key) => LocalizationService.Text(key, Loc.Instance.Language);
 
     private FormattedText MakeText(string text, double size, Brush brush) => new(
         text,

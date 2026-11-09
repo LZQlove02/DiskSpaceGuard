@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace DiskSpaceGuard.Services;
@@ -28,6 +29,9 @@ public static class FileIdentityService
     private const int FileIdInfoClass = 18;
     private const int FileDispositionInfoExClass = 21;
 
+    private const uint FileNameNormalized = 0x00000000;
+    private const uint VolumeNameDos = 0x00000000;
+
     private const uint DispositionDelete = 0x1;
     private const uint DispositionPosixSemantics = 0x2;
     private const uint DispositionIgnoreReadOnly = 0x10;
@@ -53,6 +57,7 @@ public static class FileIdentityService
         public uint Flags;
     }
 
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern SafeFileHandle CreateFileW(
         string lpFileName,
@@ -63,6 +68,7 @@ public static class FileIdentityService
         uint dwFlagsAndAttributes,
         IntPtr hTemplateFile);
 
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetFileInformationByHandleEx(
         SafeFileHandle hFile,
@@ -70,6 +76,7 @@ public static class FileIdentityService
         out FileIdInfo lpFileInformation,
         uint dwBufferSize);
 
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetFileTime(
         SafeFileHandle hFile,
@@ -77,12 +84,21 @@ public static class FileIdentityService
         out long lpLastAccessTime,
         out long lpLastWriteTime);
 
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetFileInformationByHandle(
         SafeFileHandle hFile,
         int fileInformationClass,
         ref FileDispositionInfoEx lpFileInformation,
         uint dwBufferSize);
+
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern uint GetFinalPathNameByHandleW(
+        SafeFileHandle hFile,
+        StringBuilder lpszFilePath,
+        uint cchFilePath,
+        uint dwFlags);
 
     public static bool TryReadIdentity(string path, out FileIdentity identity, out string error)
     {
@@ -99,6 +115,54 @@ public static class FileIdentityService
         }
 
         return TryReadIdentity(handle, out identity, out error);
+    }
+
+    /// <summary>
+    /// 跟随重解析点打开，读取身份并解析最终落点。
+    /// 用于删除计划：字面路径可能经由 junction/symlink 祖先落到受保护目录，
+    /// 只比对字面路径会漏判（规格 §3.5 判定表第 2 行）。
+    /// </summary>
+    public static bool TryReadIdentityWithFinalPath(string path, out FileIdentity identity,
+        out string finalPath, out string error)
+    {
+        identity = default;
+        finalPath = string.Empty;
+        error = string.Empty;
+
+        using var handle = CreateFileW(path, GenericRead, ShareAll, IntPtr.Zero,
+            OpenExisting, FileFlagBackupSemantics, IntPtr.Zero);
+
+        if (handle.IsInvalid)
+        {
+            error = new Win32Exception(Marshal.GetLastWin32Error()).Message;
+            return false;
+        }
+
+        if (!TryReadIdentity(handle, out identity, out error)) return false;
+
+        finalPath = TryGetFinalPath(handle);
+        return true;
+    }
+
+    /// <summary>读取句柄的最终落点；失败或无法规范化时返回空串（调用方按 fail-closed 处理）。</summary>
+    private static string TryGetFinalPath(SafeFileHandle handle)
+    {
+        var buffer = new StringBuilder(512);
+        var length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity,
+            VolumeNameDos | FileNameNormalized);
+        if (length == 0) return string.Empty;
+
+        // 返回值不小于容量表示缓冲区不够，按所需长度重试一次。
+        if (length >= (uint)buffer.Capacity)
+        {
+            buffer = new StringBuilder((int)length + 1);
+            length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity,
+                VolumeNameDos | FileNameNormalized);
+            if (length == 0 || length >= (uint)buffer.Capacity) return string.Empty;
+        }
+
+        // VOLUME_NAME_DOS 返回 \\?\C:\...，交给 Normalize 剥离设备前缀并统一大小写语义。
+        return ProtectionEvaluator.Normalize(buffer.ToString());
     }
 
     private static bool TryReadIdentity(SafeFileHandle handle, out FileIdentity identity, out string error)
@@ -133,6 +197,7 @@ public static class FileIdentityService
             var code = Marshal.GetLastWin32Error();
             var message = new Win32Exception(code).Message;
             if (code is 2 or 3) return (VerifyOutcome.Missing, message);
+            if (IsVolumeUnavailable(code)) return (VerifyOutcome.VolumeUnavailable, message);
             return (VerifyOutcome.Unverifiable, message);
         }
 
@@ -188,6 +253,12 @@ public static class FileIdentityService
         Matched,
         Changed,
         Missing,
+        /// <summary>设备断开 / 网络路径不可用；调用方应中止整份计划。</summary>
+        VolumeUnavailable,
         Unverifiable
     }
+
+    /// <summary>ERROR_NOT_READY / BAD_NETPATH / NETNAME_DELETED / DEVICE_NOT_CONNECTED 等。</summary>
+    private static bool IsVolumeUnavailable(int code)
+        => code is 21 or 53 or 64 or 67 or 1166 or 1167 or 1231;
 }

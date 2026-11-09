@@ -295,14 +295,31 @@ public sealed class InstalledAppService
         };
     }
 
+    /// <summary>
+    /// 解析系统目录下的 powershell.exe。绝不使用裸名：CreateProcess 会先搜索应用目录与当前目录，
+    /// 同名程序可被放置在这些可写目录中劫持启动。
+    /// </summary>
+    internal static string ResolveSystemPowerShell()
+    {
+        var systemDir = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        if (string.IsNullOrWhiteSpace(systemDir)) return string.Empty;
+        var path = Path.Combine(systemDir, "powershell.exe");
+        return File.Exists(path) ? path : string.Empty;
+    }
+
     /// <summary>执行 PowerShell 辅助进程；等待超时则终止该辅助进程（不是被卸载的应用）。</summary>
     internal static (string Output, string Error, int ExitCode) RunPowerShell(
         string script, int timeoutMilliseconds, CancellationToken token)
     {
-        var psi = new ProcessStartInfo("powershell.exe")
+        var powershell = ResolveSystemPowerShell();
+        if (powershell.Length == 0)
+            throw new InvalidOperationException("找不到系统 PowerShell（System32\\powershell.exe）。");
+
+        var psi = new ProcessStartInfo(powershell)
         {
             UseShellExecute = false,
             CreateNoWindow = true,
+            WorkingDirectory = Path.GetDirectoryName(powershell)!,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,

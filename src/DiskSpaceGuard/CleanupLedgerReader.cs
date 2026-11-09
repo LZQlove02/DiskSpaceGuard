@@ -9,7 +9,9 @@ public sealed record CleanupLedgerItem(
     string Path,
     string Outcome,
     string Verify,
-    string Message);
+    string Message,
+    string FileId = "",
+    ulong VolumeSerial = 0);
 
 public sealed record CleanupLedgerEntry(
     Guid PlanId,
@@ -102,19 +104,40 @@ public static class CleanupLedgerReader
         try
         {
             // 流式环形队列：只保留尾部 maxEntries 行，避免整文件 List + Skip().ToList() 的双份内存。
+            // 台账位于 %LOCALAPPDATA%，可被同用户进程塞入超大内容，因此同时限制读取窗口与保留字符数。
             const int MaxLineChars = 8 * 1024 * 1024;
+            const long MaxReadBytes = 64L * 1024 * 1024;
+            const long MaxRetainedChars = 64L * 1024 * 1024;
+
             var window = new Queue<string>();
             var skipped = 0;
+            long retained = 0;
+
             using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            using (var reader = new StreamReader(stream, Encoding.UTF8))
             {
+                var tailTruncated = stream.Length > MaxReadBytes;
+                if (tailTruncated) stream.Seek(stream.Length - MaxReadBytes, SeekOrigin.Begin);
+
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                // 从文件中间开始时首行大概率是半行，丢弃。
+                if (tailTruncated) reader.ReadLine();
+
                 string? line;
                 while ((line = reader.ReadLine()) is not null)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     if (line.Length > MaxLineChars) { skipped++; continue; }
-                    if (window.Count == maxEntries) window.Dequeue();
+                    // 逐条结果行（recordType=item）只用于崩溃后审计，不进入台账列表。
+                    if (line.Contains("\"recordType\":\"item\"", StringComparison.Ordinal)) continue;
+
+                    if (window.Count == maxEntries)
+                        retained -= window.Dequeue().Length;
+
                     window.Enqueue(line);
+                    retained += line.Length;
+
+                    while (retained > MaxRetainedChars && window.Count > 1)
+                        retained -= window.Dequeue().Length;
                 }
             }
 
@@ -160,7 +183,9 @@ public static class CleanupLedgerReader
                     GetString(item, "path"),
                     GetString(item, "outcome"),
                     GetString(item, "verify"),
-                    GetString(item, "Message")));
+                    GetString(item, "Message"),
+                    GetString(item, "fileId"),
+                    GetULong(item, "volumeSerial")));
             }
         }
 
@@ -191,6 +216,9 @@ public static class CleanupLedgerReader
 
     private static long GetLong(JsonElement element, string name)
         => element.TryGetProperty(name, out var value) && value.TryGetInt64(out var number) ? number : 0;
+
+    private static ulong GetULong(JsonElement element, string name)
+        => element.TryGetProperty(name, out var value) && value.TryGetUInt64(out var number) ? number : 0;
 
     private static DateTime GetDate(JsonElement element, string name)
     {

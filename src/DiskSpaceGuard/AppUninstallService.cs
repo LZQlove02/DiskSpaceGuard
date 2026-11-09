@@ -1,10 +1,12 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using DiskSpaceGuard.Models;
+using Microsoft.Win32.SafeHandles;
 
 namespace DiskSpaceGuard.Services;
 
@@ -64,7 +66,9 @@ public static class AppOpLedger
             lock (Gate)
             {
                 DeleteService.RepairLedgerTail(Path);
-                File.AppendAllText(Path, JsonSerializer.Serialize(entry) + Environment.NewLine, Encoding.UTF8);
+                // 卸载命令可能带许可证/密码参数：落盘前先脱敏。
+                var redacted = entry with { Command = PrivacyRedactor.RedactDefault(entry.Command) };
+                File.AppendAllText(Path, JsonSerializer.Serialize(redacted) + Environment.NewLine, Encoding.UTF8);
             }
             return true;
         }
@@ -188,9 +192,56 @@ public sealed class AppUninstallService
             return false;
         }
 
+        // 重解析点会把“看起来无害的路径”指向任意目标；系统目录本身就存在大量硬链接，
+        // 因此只对非 Windows 目录额外拒绝多链接文件。
+        try
+        {
+            var attributes = File.GetAttributes(full);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                reason = "拒绝重解析点作为卸载目标";
+                return false;
+            }
+
+            using var handle = File.OpenHandle(full, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            if (GetFileInformationByHandle(handle, out var info) &&
+                info.NumberOfLinks > 1 && !AppCatalog.IsUnderWindows(full))
+            {
+                reason = "拒绝硬链接作为卸载目标";
+                return false;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            reason = "无法读取卸载目标属性：" + ex.Message;
+            return false;
+        }
+
         resolved = full;
         return true;
     }
+
+    // 原生 FILETIME 按 4 字节对齐；必须 Pack=4，否则 long 字段会按 8 字节对齐导致布局错位。
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    private struct ByHandleFileInformation
+    {
+        public uint FileAttributes;
+        public long CreationTime;
+        public long LastAccessTime;
+        public long LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle hFile, out ByHandleFileInformation lpFileInformation);
 
     public async Task<AppUninstallResult> UninstallAsync(InstalledApp app, bool silent, CancellationToken token)
     {
@@ -210,39 +261,58 @@ public sealed class AppUninstallService
     private static async Task<AppUninstallResult> UninstallCoreAsync(
         InstalledApp app, bool silent, CancellationToken token)
     {
-        var plan = BuildLaunchPlan(app, silent);
-        if (plan is null)
-        {
-            Log(app, silent, silent ? app.QuietUninstallCommand : app.UninstallCommand,
-                null, null, AppUninstallOutcome.NotUninstallable);
-            return new AppUninstallResult(AppUninstallOutcome.NotUninstallable, null, null,
-                app.UninstallCommand, null, null);
-        }
+        ProcessStartInfo psi;
+        string command;
 
-        if (!TryResolveTrustedLaunch(plan.FileName, out var resolved, out var trustReason))
+        if (app.Source == AppSource.Appx)
         {
-            RunLog.WriteException("Uninstall untrusted target", new InvalidOperationException(trustReason));
-            Log(app, silent, plan.Command, null, null, AppUninstallOutcome.LaunchFailed);
-            return new AppUninstallResult(AppUninstallOutcome.LaunchFailed, null, null,
-                plan.Command, trustReason, null);
-        }
-
-        // 仅提权分支需要 ShellExecute；非提权用 ArgumentList 逐项传参，不再拼接命令字符串。
-        var elevated = plan.RequiresElevation && !IsElevated();
-        var psi = new ProcessStartInfo
-        {
-            FileName = resolved,
-            UseShellExecute = elevated,
-            WindowStyle = ProcessWindowStyle.Normal
-        };
-        if (elevated)
-        {
-            psi.Verb = "runas";
-            psi.Arguments = WindowsCommandLine.Join(plan.Arguments);
+            // MSIX 由本进程直接调用 System32 的 PowerShell，不走注册表命令与 PATH 解析。
+            if (!TryBuildAppxLaunch(app, out psi, out command, out var reason))
+            {
+                RunLog.WriteException("Uninstall appx target", new InvalidOperationException(reason));
+                Log(app, silent, command, null, null, AppUninstallOutcome.LaunchFailed);
+                return new AppUninstallResult(AppUninstallOutcome.LaunchFailed, null, null,
+                    command, reason, null);
+            }
         }
         else
         {
-            foreach (var argument in plan.Arguments) psi.ArgumentList.Add(argument);
+            var plan = BuildLaunchPlan(app, silent);
+            if (plan is null)
+            {
+                Log(app, silent, silent ? app.QuietUninstallCommand : app.UninstallCommand,
+                    null, null, AppUninstallOutcome.NotUninstallable);
+                return new AppUninstallResult(AppUninstallOutcome.NotUninstallable, null, null,
+                    app.UninstallCommand, null, null);
+            }
+
+            if (!TryResolveTrustedLaunch(plan.FileName, out var resolved, out var trustReason))
+            {
+                RunLog.WriteException("Uninstall untrusted target", new InvalidOperationException(trustReason));
+                Log(app, silent, plan.Command, null, null, AppUninstallOutcome.LaunchFailed);
+                return new AppUninstallResult(AppUninstallOutcome.LaunchFailed, null, null,
+                    plan.Command, trustReason, null);
+            }
+
+            command = plan.Command;
+
+            // 仅提权分支需要 ShellExecute；非提权用 ArgumentList 逐项传参，不再拼接命令字符串。
+            var elevated = plan.RequiresElevation && !IsElevated();
+            psi = new ProcessStartInfo
+            {
+                FileName = resolved,
+                UseShellExecute = elevated,
+                WindowStyle = ProcessWindowStyle.Normal
+            };
+            if (elevated)
+            {
+                psi.Verb = "runas";
+                psi.Arguments = WindowsCommandLine.Join(plan.Arguments);
+            }
+            else
+            {
+                foreach (var argument in plan.Arguments) psi.ArgumentList.Add(argument);
+            }
         }
 
         Process? process;
@@ -252,33 +322,33 @@ public sealed class AppUninstallService
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            Log(app, silent, plan.Command, null, null, AppUninstallOutcome.DeclinedElevation);
+            Log(app, silent, command, null, null, AppUninstallOutcome.DeclinedElevation);
             return new AppUninstallResult(AppUninstallOutcome.DeclinedElevation, null, null,
-                plan.Command, null, null);
+                command, null, null);
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException
             or FileNotFoundException)
         {
             RunLog.WriteException("Uninstall launch", ex);
-            Log(app, silent, plan.Command, null, null, AppUninstallOutcome.LaunchFailed);
+            Log(app, silent, command, null, null, AppUninstallOutcome.LaunchFailed);
             return new AppUninstallResult(AppUninstallOutcome.LaunchFailed, null, null,
-                plan.Command, ex.Message, null);
+                command, ex.Message, null);
         }
 
         if (process is null)
         {
-            Log(app, silent, plan.Command, null, null, AppUninstallOutcome.LaunchFailed);
+            Log(app, silent, command, null, null, AppUninstallOutcome.LaunchFailed);
             return new AppUninstallResult(AppUninstallOutcome.LaunchFailed, null, null,
-                plan.Command, null, null);
+                command, null, null);
         }
 
         using (process)
         {
             if (!await WaitForExitAsync(process, UninstallTimeoutMilliseconds, token).ConfigureAwait(false))
             {
-                Log(app, silent, plan.Command, null, null, AppUninstallOutcome.StillRunning);
+                Log(app, silent, command, null, null, AppUninstallOutcome.StillRunning);
                 return new AppUninstallResult(AppUninstallOutcome.StillRunning, null, null,
-                    plan.Command, null, null);
+                    command, null, null);
             }
 
             var exitCode = process.ExitCode;
@@ -288,12 +358,55 @@ public sealed class AppUninstallService
             var outcome = DecideOutcome(exitCode, stillInstalled);
 
             string? residual = null;
-            if (stillInstalled == false && AppLeftoverStore.RecordIfValid(app))
+            // MSIX 的 InstallLocation 位于系统管理的 WindowsApps，不能登记为“卸载残留”。
+            if (stillInstalled == false && app.Source != AppSource.Appx &&
+                AppLeftoverStore.RecordIfValid(app))
                 residual = app.InstallLocation;
 
-            Log(app, silent, plan.Command, exitCode, stillInstalled, outcome);
-            return new AppUninstallResult(outcome, exitCode, stillInstalled, plan.Command, null, residual);
+            Log(app, silent, command, exitCode, stillInstalled, outcome);
+            return new AppUninstallResult(outcome, exitCode, stillInstalled, command, null, residual);
         }
+    }
+
+    /// <summary>
+    /// MSIX 不走注册表命令：只接受 Get-AppxPackage 枚举出的合法包名，
+    /// 由本进程直接启动 System32 下的 PowerShell，脚本按参数列表传入，不经过 PATH 解析。
+    /// </summary>
+    private static bool TryBuildAppxLaunch(InstalledApp app, out ProcessStartInfo psi,
+        out string command, out string reason)
+    {
+        psi = new ProcessStartInfo();
+        command = app.UninstallCommand;
+        reason = string.Empty;
+
+        if (!AppCatalog.IsValidPackageFullName(app.PackageFullName))
+        {
+            reason = "MSIX 包名不合法";
+            return false;
+        }
+
+        var powershell = InstalledAppService.ResolveSystemPowerShell();
+        if (powershell.Length == 0)
+        {
+            reason = "找不到系统 PowerShell（System32\\powershell.exe）";
+            return false;
+        }
+
+        psi = new ProcessStartInfo(powershell)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+            WorkingDirectory = Path.GetDirectoryName(powershell)!
+        };
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-NonInteractive");
+        psi.ArgumentList.Add("-Command");
+        psi.ArgumentList.Add("Remove-AppxPackage -Package '" + app.PackageFullName + "'");
+
+        command = powershell + " -NoProfile -NonInteractive -Command \"Remove-AppxPackage -Package '" +
+                  app.PackageFullName + "'\"";
+        return true;
     }
 
     /// <summary>

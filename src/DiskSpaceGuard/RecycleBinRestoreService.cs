@@ -19,15 +19,21 @@ public static class RecycleBinRestoreService
     private const int RecycleBinNamespace = 10;
 
     /// <summary>只有回收站方式、且路径为本地可信路径的记录才能还原；按路径去重。</summary>
-    public static IReadOnlyList<string> RestorablePaths(CleanupLedgerEntry entry)
+    public static IReadOnlyList<CleanupLedgerItem> RestorableItems(CleanupLedgerEntry entry)
     {
-        if (entry.Mode == "Permanent") return Array.Empty<string>();
+        if (entry.Mode == "Permanent") return Array.Empty<CleanupLedgerItem>();
         return entry.Items
             .Where(i => i.Outcome == "MovedToRecycleBin" && IsSafeRestorePath(i.Path))
-            .Select(i => ProtectionEvaluator.Normalize(i.Path))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .GroupBy(i => ProtectionEvaluator.Normalize(i.Path), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
             .ToList();
     }
+
+    public static IReadOnlyList<string> RestorablePaths(CleanupLedgerEntry entry)
+        => RestorableItems(entry)
+            .Select(i => ProtectionEvaluator.Normalize(i.Path))
+            .Where(p => p.Length > 0)
+            .ToList();
 
     /// <summary>
     /// 台账位于 %LOCALAPPDATA%，可被同用户其他进程篡改。还原前只接受本地盘符的规范化绝对路径，
@@ -43,7 +49,68 @@ public static class RecycleBinRestoreService
                char.IsLetter(root[0]) && root[1] == ':';
     }
 
+    /// <summary>
+    /// 批量核对“原位置是否真的出现在回收站”。一次遍历回收站，避免逐项 O(P×R)。
+    /// 返回 null 表示无法枚举回收站（不能据此断言成功或失败）。
+    /// </summary>
+    public static HashSet<string>? TryCollectRecycledPaths(IEnumerable<string> originalPaths,
+        CancellationToken token = default)
+    {
+        var wanted = new HashSet<string>(
+            originalPaths.Select(ProtectionEvaluator.Normalize).Where(p => p.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
+        if (wanted.Count == 0) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("Shell.Application");
+            if (shellType is null) return null;
+
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            dynamic? recycleBin = shell.NameSpace(RecycleBinNamespace);
+            if (recycleBin is null) return null;
+
+            dynamic items = recycleBin.Items();
+            var count = (int)items.Count;
+            var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (var i = 0; i < count; i++)
+            {
+                token.ThrowIfCancellationRequested();
+                dynamic item = items.Item(i);
+                string? deletedFrom = null;
+                string? name = null;
+
+                try
+                {
+                    deletedFrom = item.ExtendedProperty("System.Recycle.DeletedFrom") as string;
+                    name = item.Name as string;
+                }
+                catch (COMException) { }
+
+                if (string.IsNullOrEmpty(deletedFrom) || string.IsNullOrEmpty(name)) continue;
+
+                var key = ProtectionEvaluator.Normalize(
+                    Path.Combine(deletedFrom, name).TrimEnd(Path.DirectorySeparatorChar));
+                if (key.Length > 0 && wanted.Contains(key)) found.Add(key);
+            }
+
+            return found;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception)
+        {
+            // 复核失败绝不能影响已完成的删除结果；返回 null 由调用方如实标注“无法复核”。
+            return null;
+        }
+    }
+
     public static RestoreResult Restore(IReadOnlyList<string> originalPaths)
+        => Restore(originalPaths
+            .Select(p => new CleanupLedgerItem(0, p, "MovedToRecycleBin", string.Empty, string.Empty))
+            .ToList());
+
+    public static RestoreResult Restore(IReadOnlyList<CleanupLedgerItem> items, DateTime? preferredUtc = null)
     {
         var results = new List<RestoreItemResult>();
         dynamic? recycleBin = null;
@@ -52,40 +119,42 @@ public static class RecycleBinRestoreService
         {
             var shellType = Type.GetTypeFromProgID("Shell.Application");
             if (shellType is null)
-                return AllFailed(originalPaths, Text("Restore.ShellUnavailable"));
+                return AllFailed(items, Text("Restore.ShellUnavailable"));
 
             dynamic shell = Activator.CreateInstance(shellType)!;
             recycleBin = shell.NameSpace(RecycleBinNamespace);
             if (recycleBin is null)
-                return AllFailed(originalPaths, Text("Restore.ShellUnavailable"));
+                return AllFailed(items, Text("Restore.ShellUnavailable"));
         }
         catch (Exception ex) when (ex is COMException or InvalidCastException or ArgumentException)
         {
-            return AllFailed(originalPaths, ex.Message);
+            return AllFailed(items, ex.Message);
         }
 
         // 一次性建立回收站条目索引，把 O(P×R) 的 COM 全扫降为 O(R+P)。
+        // 同名多条时，优先选择删除时间最接近台账执行时间的条目。
         Dictionary<string, dynamic>? index = null;
-        try { index = BuildIndex(recycleBin); }
+        try { index = BuildIndex(recycleBin, preferredUtc); }
         catch (Exception ex) when (ex is COMException or InvalidCastException)
         {
             System.Diagnostics.Debug.WriteLine($"Recycle index failed: {ex.Message}");
         }
 
-        foreach (var path in originalPaths)
+        foreach (var ledgerItem in items)
         {
-            if (string.IsNullOrWhiteSpace(path)) continue;
+            var path = ProtectionEvaluator.Normalize(ledgerItem.Path);
+            if (path.Length == 0) continue;
 
             // 台账可被篡改：非本地 / 不可信路径一律不触发任何文件系统或 Shell 访问。
             if (!IsSafeRestorePath(path))
             {
-                results.Add(new RestoreItemResult(path, false, Text("Restore.NotFound")));
+                results.Add(new RestoreItemResult(ledgerItem.Path, false, Text("Restore.NotFound")));
                 continue;
             }
 
             if (File.Exists(path) || Directory.Exists(path))
             {
-                results.Add(new RestoreItemResult(path, false, Text("Restore.AlreadyExists")));
+                results.Add(new RestoreItemResult(ledgerItem.Path, false, Text("Restore.AlreadyExists")));
                 continue;
             }
 
@@ -103,25 +172,37 @@ public static class RecycleBinRestoreService
                 }
                 if (item is null)
                 {
-                    results.Add(new RestoreItemResult(path, false, Text("Restore.NotFound")));
+                    results.Add(new RestoreItemResult(ledgerItem.Path, false, Text("Restore.NotFound")));
                     continue;
                 }
 
                 var invoked = InvokeRestoreVerb(item);
                 if (!invoked)
                 {
-                    results.Add(new RestoreItemResult(path, false, Text("Restore.NoVerb")));
+                    results.Add(new RestoreItemResult(ledgerItem.Path, false, Text("Restore.NoVerb")));
                     continue;
                 }
 
-                if (WaitForPath(path, TimeSpan.FromSeconds(3)))
-                    results.Add(new RestoreItemResult(path, true, Text("Restore.Done")));
-                else
-                    results.Add(new RestoreItemResult(path, false, Text("Restore.NotReappeared")));
+                if (!WaitForPath(path, TimeSpan.FromSeconds(3)))
+                {
+                    results.Add(new RestoreItemResult(ledgerItem.Path, false,
+                        Text("Restore.NotReappeared")));
+                    continue;
+                }
+
+                // 还原后复核对象身份：同名对象可能被还原错，或回收站条目被替换。
+                if (!MatchesLedgerIdentity(path, ledgerItem))
+                {
+                    results.Add(new RestoreItemResult(ledgerItem.Path, false,
+                        Text("Restore.IdentityMismatch")));
+                    continue;
+                }
+
+                results.Add(new RestoreItemResult(ledgerItem.Path, true, Text("Restore.Done")));
             }
             catch (Exception ex) when (ex is COMException or InvalidCastException or IOException or UnauthorizedAccessException)
             {
-                results.Add(new RestoreItemResult(path, false, ex.Message));
+                results.Add(new RestoreItemResult(ledgerItem.Path, false, ex.Message));
             }
         }
 
@@ -131,10 +212,19 @@ public static class RecycleBinRestoreService
             results);
     }
 
-    /// <summary>一次遍历回收站，按「原位置」建索引；同名多条保留第一条，与 FindItem 语义一致。</summary>
-    private static Dictionary<string, dynamic> BuildIndex(dynamic recycleBin)
+    /// <summary>旧台账没有 FileId 时不做阻断；有身份且能读取时必须一致。</summary>
+    private static bool MatchesLedgerIdentity(string restoredPath, CleanupLedgerItem item)
+    {
+        if (string.IsNullOrEmpty(item.FileId)) return true;
+        if (!FileIdentityService.TryReadIdentity(restoredPath, out var identity, out _)) return true;
+        return string.Equals(identity.ToPlanString(), item.FileId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>一次遍历回收站，按「原位置」建索引；同名多条时取删除时间最接近台账执行时间者。</summary>
+    private static Dictionary<string, dynamic> BuildIndex(dynamic recycleBin, DateTime? preferredUtc)
     {
         var index = new Dictionary<string, dynamic>(StringComparer.OrdinalIgnoreCase);
+        var bestDelta = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         dynamic items = recycleBin.Items();
         var count = (int)items.Count;
 
@@ -153,20 +243,63 @@ public static class RecycleBinRestoreService
             }
             catch (COMException) { }
 
+            var deletedUtc = ReadDeletedUtc(item);
+            var delta = DeltaSeconds(deletedUtc, preferredUtc);
+
             if (!string.IsNullOrEmpty(deletedFrom) && !string.IsNullOrEmpty(name))
+                Consider(Path.Combine(deletedFrom, name).TrimEnd(Path.DirectorySeparatorChar));
+            if (!string.IsNullOrEmpty(itemPath))
+                Consider(itemPath.TrimEnd(Path.DirectorySeparatorChar));
+
+            void Consider(string key)
             {
-                var key = Path.Combine(deletedFrom, name)
-                    .TrimEnd(Path.DirectorySeparatorChar);
-                if (!index.ContainsKey(key)) index[key] = item;
-            }
-            else if (!string.IsNullOrEmpty(itemPath))
-            {
-                var key = itemPath.TrimEnd(Path.DirectorySeparatorChar);
-                if (!index.ContainsKey(key)) index[key] = item;
+                if (!index.ContainsKey(key))
+                {
+                    index[key] = item;
+                    bestDelta[key] = delta;
+                    return;
+                }
+
+                if (preferredUtc is null || deletedUtc is null) return;
+                if (delta < bestDelta[key])
+                {
+                    index[key] = item;
+                    bestDelta[key] = delta;
+                }
             }
         }
 
         return index;
+    }
+
+    private static DateTime? ReadDeletedUtc(dynamic item)
+    {
+        try
+        {
+            object? value = item.ExtendedProperty("System.Recycle.DateDeleted");
+            return value switch
+            {
+                DateTime date => date,
+                string text when DateTime.TryParse(text, out var parsed) => parsed,
+                _ => null
+            };
+        }
+        catch (COMException)
+        {
+            return null;
+        }
+    }
+
+    private static double DeltaSeconds(DateTime? deletedUtc, DateTime? preferredUtc)
+    {
+        if (deletedUtc is null || preferredUtc is null) return double.MaxValue;
+        var deleted = deletedUtc.Value.Kind == DateTimeKind.Utc
+            ? deletedUtc.Value
+            : deletedUtc.Value.ToUniversalTime();
+        var preferred = preferredUtc.Value.Kind == DateTimeKind.Utc
+            ? preferredUtc.Value
+            : preferredUtc.Value.ToUniversalTime();
+        return Math.Abs((deleted - preferred).TotalSeconds);
     }
 
     private static dynamic? FindItem(dynamic recycleBin, string originalPath)
@@ -253,8 +386,8 @@ public static class RecycleBinRestoreService
         return false;
     }
 
-    private static RestoreResult AllFailed(IReadOnlyList<string> paths, string message)
-        => new(0, paths.Count, paths.Select(p => new RestoreItemResult(p, false, message)).ToList());
+    private static RestoreResult AllFailed(IReadOnlyList<CleanupLedgerItem> items, string message)
+        => new(0, items.Count, items.Select(i => new RestoreItemResult(i.Path, false, message)).ToList());
 
     private static string Text(string key)
         => LocalizationService.Text(key, Loc.Instance.Language);

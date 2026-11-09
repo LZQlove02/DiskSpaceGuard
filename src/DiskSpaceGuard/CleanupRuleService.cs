@@ -35,6 +35,9 @@ public sealed class CleanupRuleService
 {
     private const int MaxItemsPerRule = 200_000;
 
+    /// <summary>递归目录树的深度上限；防止极深目录导致 StackOverflow（不可捕获）。</summary>
+    private const int MaxTreeDepth = 256;
+
     private readonly ProtectionEvaluator _protection;
     private readonly IReadOnlyList<CleanupRule> _rules;
 
@@ -76,17 +79,20 @@ public sealed class CleanupRuleService
     public IReadOnlyList<string> GetMatchedFiles(CleanupSuggestion suggestion,
         CancellationToken token = default)
     {
+        // 多条“应用残留”规则共用 RuleId=app.leftovers，必须同时按目标路径匹配，
+        // 否则预演任意一条残留都会打开第一条残留的目录。
         var rule = _rules.FirstOrDefault(r =>
-            string.Equals(r.RuleId, suggestion.RuleId, StringComparison.Ordinal));
+            string.Equals(r.RuleId, suggestion.RuleId, StringComparison.Ordinal) &&
+            string.Equals(r.TargetPattern, suggestion.Path, StringComparison.OrdinalIgnoreCase));
         if (rule is null || !Directory.Exists(rule.TargetPattern)) return Array.Empty<string>();
 
         var cutoff = DateTime.UtcNow - rule.MinAge;
         var hits = new List<string>();
 
-        void Walk(string dir)
+        void Walk(string dir, int depth)
         {
             token.ThrowIfCancellationRequested();
-            if (hits.Count >= MaxItemsPerRule) return;
+            if (hits.Count >= MaxItemsPerRule || depth > MaxTreeDepth) return;
 
             FileSystemInfo[] entries;
             try { entries = new DirectoryInfo(dir).GetFileSystemInfos(); }
@@ -102,7 +108,7 @@ public sealed class CleanupRuleService
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
 
                 if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
-                if ((attributes & FileAttributes.Directory) != 0) { Walk(entry.FullName); continue; }
+                if ((attributes & FileAttributes.Directory) != 0) { Walk(entry.FullName, depth + 1); continue; }
                 if (entry.LastWriteTimeUtc > cutoff) continue;
 
                 // 比统计阶段更保守：受保护项不进入可删清单。
@@ -113,7 +119,7 @@ public sealed class CleanupRuleService
             }
         }
 
-        try { Walk(rule.TargetPattern); }
+        try { Walk(rule.TargetPattern, 0); }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -136,7 +142,12 @@ public sealed class CleanupRuleService
         try
         {
             var rootInfo = new DirectoryInfo(rule.TargetPattern);
-            level = _protection.Evaluate(rule.TargetPattern, rootInfo.Attributes, out _);
+            // 规则根本身或其祖先可能是 junction：按真实落点判定，避免把系统目录当缓存目录。
+            var hasIdentity = FileIdentityService.TryReadIdentityWithFinalPath(
+                rule.TargetPattern, out _, out var finalPath, out _);
+            level = hasIdentity
+                ? _protection.EvaluateWithFinalPath(rule.TargetPattern, rootInfo.Attributes, finalPath, out _)
+                : _protection.Evaluate(rule.TargetPattern, rootInfo.Attributes, out _);
             lastWrite = rootInfo.LastWriteTimeUtc;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -146,10 +157,10 @@ public sealed class CleanupRuleService
 
         var cutoff = DateTime.UtcNow - rule.MinAge;
 
-        void Walk(string dir)
+        void Walk(string dir, int depth)
         {
             token.ThrowIfCancellationRequested();
-            if (files >= MaxItemsPerRule)
+            if (files >= MaxItemsPerRule || depth > MaxTreeDepth)
             {
                 truncated = true;
                 return;
@@ -186,7 +197,7 @@ public sealed class CleanupRuleService
 
                 if ((attributes & FileAttributes.Directory) != 0)
                 {
-                    Walk(entry.FullName);
+                    Walk(entry.FullName, depth + 1);
                     dirs++;
                     continue;
                 }
@@ -212,7 +223,7 @@ public sealed class CleanupRuleService
 
         try
         {
-            Walk(rule.TargetPattern);
+            Walk(rule.TargetPattern, 0);
         }
         catch (OperationCanceledException)
         {

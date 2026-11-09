@@ -69,6 +69,9 @@ public sealed class DuplicateFinderService
     private const uint FileAttributeOffline = 0x1000;
     private const uint FileAttributeRecallOnDataAccess = 0x400000;
 
+    /// <summary>递归目录树的深度上限；防止极深目录导致 StackOverflow（不可捕获）。</summary>
+    private const int MaxTreeDepth = 256;
+
     private readonly ProtectionEvaluator _protection;
 
     public DuplicateFinderService(ProtectionEvaluator? protection = null)
@@ -105,9 +108,15 @@ public sealed class DuplicateFinderService
         var candidates = new List<Candidate>();
         var seenIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        void Walk(string dir)
+        void Walk(string dir, int depth)
         {
             token.ThrowIfCancellationRequested();
+            if (depth > MaxTreeDepth)
+            {
+                readErrors++;
+                return;
+            }
+
             FileSystemInfo[] entries;
             try { entries = new DirectoryInfo(dir).GetFileSystemInfos(); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -131,7 +140,7 @@ public sealed class DuplicateFinderService
 
                 if ((attributes & FileAttributes.Directory) != 0)
                 {
-                    Walk(entry.FullName);
+                    Walk(entry.FullName, depth + 1);
                     continue;
                 }
 
@@ -184,7 +193,7 @@ public sealed class DuplicateFinderService
             }
         }
 
-        Walk(root);
+        Walk(root, 0);
 
         // 阶段 1：按精确大小分组；组内不足 2 个直接淘汰。
         var bySize = candidates.GroupBy(c => c.Size).Where(g => g.Count() > 1).ToList();

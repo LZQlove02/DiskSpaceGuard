@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using DiskSpaceGuard.Models;
+using DiskSpaceGuard.Services;
 
 namespace DiskSpaceGuard.Controls;
 
@@ -32,6 +33,9 @@ public sealed class SunburstView : FrameworkElement
     public TreemapColorMode ColorMode { get; set; } = TreemapColorMode.Type;
     public int MaxLevels { get; set; } = 3;
 
+    /// <summary>单层最多绘制的扇区数；超出部分合并为「其余 N 项」，避免超大目录卡住 UI。</summary>
+    public int MaxArcs { get; set; } = 120;
+
     public event Action<ScanNode>? DirectoryActivated;
     public event Action<ScanNode>? FileActivated;
 
@@ -43,7 +47,7 @@ public sealed class SunburstView : FrameworkElement
 
         if (_root is null || _root.Children.Count == 0)
         {
-            DrawCenter(dc, "无子项", string.Empty);
+            DrawCenter(dc, T("Chart.Empty"), string.Empty);
             return;
         }
 
@@ -60,8 +64,22 @@ public sealed class SunburstView : FrameworkElement
 
     private void DrawArcRing(DrawingContext dc, Point center, double r0, double r1, IReadOnlyList<ScanNode> kids, int level, long maxSize)
     {
-        var visible = kids.Where(k => k.LogicalSize > 0).OrderByDescending(k => k.LogicalSize).ToList();
-        if (visible.Count == 0) return;
+        var ordered = kids.Where(k => k.LogicalSize > 0).OrderByDescending(k => k.LogicalSize).ToList();
+        if (ordered.Count == 0) return;
+
+        var visible = ordered;
+        var maxArcs = Math.Max(1, MaxArcs);
+        if (ordered.Count > maxArcs)
+        {
+            var tail = ordered.Skip(maxArcs).ToList();
+            visible = ordered.Take(maxArcs).ToList();
+            visible.Add(new ScanNode(string.Format(T("Chart.RestCount"), tail.Count), string.Empty, NodeKind.File)
+            {
+                LogicalSize = tail.Sum(t => t.LogicalSize),
+                IsAggregate = true,
+                AggregatedCount = tail.Count
+            });
+        }
 
         var total = visible.Sum(k => (double)k.LogicalSize);
         if (total <= 0) return;
@@ -142,6 +160,8 @@ public sealed class SunburstView : FrameworkElement
         VisualTreeHelper.GetDpi(this).PixelsPerDip);
 
     private static string Trim(string value, int max) => value.Length <= max ? value : value[..Math.Max(1, max - 1)] + "…";
+
+    private static string T(string key) => LocalizationService.Text(key, Loc.Instance.Language);
 
     private static Point PointAt(Point center, double radius, double angle) =>
         new(center.X + radius * Math.Cos(angle), center.Y + radius * Math.Sin(angle));

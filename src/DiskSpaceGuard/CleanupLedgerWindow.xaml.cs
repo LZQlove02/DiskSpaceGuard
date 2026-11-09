@@ -100,7 +100,7 @@ public partial class CleanupLedgerWindow : Window
             (string.IsNullOrEmpty(entry.Fatal) ? string.Empty : $"\n{entry.Fatal}");
 
         ItemsList.ItemsSource = entry.Items.Select(i => new LedgerItemRow(i)).ToList();
-        RestoreButton.IsEnabled = RecycleBinRestoreService.RestorablePaths(entry).Count > 0;
+        RestoreButton.IsEnabled = RecycleBinRestoreService.RestorableItems(entry).Count > 0;
     }
 
     private static string T(string key) => LocalizationService.Text(key, Loc.Instance.Language);
@@ -117,16 +117,16 @@ public partial class CleanupLedgerWindow : Window
             return;
         }
 
-        var paths = RecycleBinRestoreService.RestorablePaths(entry);
+        var items = RecycleBinRestoreService.RestorableItems(entry);
 
-        if (paths.Count == 0)
+        if (items.Count == 0)
         {
             MessageBox.Show(this, T("Ledger.RestoreNoEntries"), "DiskSpaceGuard",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        if (MessageBox.Show(this, string.Format(T("Ledger.RestoreConfirm"), paths.Count),
+        if (MessageBox.Show(this, string.Format(T("Ledger.RestoreConfirm"), items.Count),
                 "DiskSpaceGuard", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
 
@@ -134,7 +134,7 @@ public partial class CleanupLedgerWindow : Window
         StatusText.Text = T("Ledger.Restoring");
         try
         {
-            var result = await Task.Run(() => RecycleBinRestoreService.Restore(paths));
+            var result = await Task.Run(() => RecycleBinRestoreService.Restore(items, entry.ExecutedUtc));
             StatusText.Text = string.Format(T("Ledger.RestoreResult"), result.Restored, result.Failed);
 
             var detail = result.AnyFailure
@@ -154,7 +154,7 @@ public partial class CleanupLedgerWindow : Window
         }
         finally
         {
-            RestoreButton.IsEnabled = RecycleBinRestoreService.RestorablePaths(entry).Count > 0;
+            RestoreButton.IsEnabled = RecycleBinRestoreService.RestorableItems(entry).Count > 0;
         }
     }
 

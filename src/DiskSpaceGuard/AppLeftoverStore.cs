@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using DiskSpaceGuard.Models;
 
@@ -18,13 +19,22 @@ public static class AppLeftoverStore
 
     private static string FilePath => Path.Combine(Dir, "app-leftovers.json");
 
+    /// <summary>该文件同用户可写，读取前限长，避免超大文件拖垮清理规则加载。</summary>
+    private const long MaxBytes = 1024 * 1024;
+
     public static IReadOnlyList<AppLeftover> Load()
     {
         try
         {
             if (!File.Exists(FilePath)) return Array.Empty<AppLeftover>();
+            if (new FileInfo(FilePath).Length > MaxBytes) return Array.Empty<AppLeftover>();
+
             var json = File.ReadAllText(FilePath);
-            return JsonSerializer.Deserialize<List<AppLeftover>>(json) ?? new List<AppLeftover>();
+            var items = JsonSerializer.Deserialize<List<AppLeftover>>(json,
+                new JsonSerializerOptions { MaxDepth = 32 });
+
+            // 手工构造的 [null] 会让后续 LINQ 直接 NRE。
+            return items?.Where(item => item is not null).ToList() ?? new List<AppLeftover>();
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -38,6 +48,7 @@ public static class AppLeftoverStore
         var location = app.InstallLocation;
         if (!IsSafeLocation(location) || !Directory.Exists(location)) return false;
 
+        var tmp = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             Directory.CreateDirectory(Dir);
@@ -45,16 +56,25 @@ public static class AppLeftoverStore
                 !string.Equals(l.InstallLocation, location, StringComparison.OrdinalIgnoreCase)).ToList();
             items.Add(new AppLeftover(app.DisplayName, location, DateTime.UtcNow));
             var json = JsonSerializer.Serialize(items, new JsonSerializerOptions { WriteIndented = true });
-            var tmp = FilePath + ".tmp";
-            File.WriteAllText(tmp, json);
-            if (File.Exists(FilePath)) File.Replace(tmp, FilePath, null);
-            else File.Move(tmp, FilePath);
+            // 随机临时名 + CreateNew：避免固定 .tmp 被同用户进程预置链接/文件。
+            using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
+            {
+                writer.Write(json);
+            }
+            File.Move(tmp, FilePath, overwrite: true);
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Debug.WriteLine($"Cannot record app leftover: {ex.Message}");
             return false;
+        }
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 
@@ -95,6 +115,21 @@ public static class AppLeftoverStore
         if (root.Length < 2 || !char.IsLetter(root[0]) || root[1] != ':') return false;
         if (full.Length <= root.Length) return false;
         if (AppCatalog.IsUnderWindows(full)) return false;
+
+        // WindowsApps 由系统管理（ACL 严格，且存放所有已安装 MSIX），绝不能作为“残留”交给清理规则。
+        // 32 位进程的 ProgramFiles 会重定向到 (x86)，两个根都要排除。
+        foreach (var programRoot in new[]
+                 {
+                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(programRoot)) continue;
+            var windowsApps = Path.Combine(programRoot, "WindowsApps");
+            if (string.Equals(full, windowsApps, StringComparison.OrdinalIgnoreCase) ||
+                full.StartsWith(windowsApps + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
 
         var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var shared = new[]

@@ -76,9 +76,11 @@ public static class WindowsCommandLine
     public static string Join(IEnumerable<string> arguments)
         => string.Join(" ", arguments.Select(QuoteArgument));
 
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr CommandLineToArgvW(string lpCmdLine, out int pNumArgs);
 
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [DllImport("kernel32.dll")]
     private static extern IntPtr LocalFree(IntPtr hMem);
 }

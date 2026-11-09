@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using DiskSpaceGuard.Models;
+using DiskSpaceGuard.Services;
 
 namespace DiskSpaceGuard.Controls;
 
@@ -245,14 +246,14 @@ public sealed class TreemapView : FrameworkElement
 
         if (_root is null || _root.Children.Count == 0 || ActualWidth < 4 || ActualHeight < 4)
         {
-            DrawCenterText(dc, "无子项");
+            DrawCenterText(dc, T("Chart.Empty"));
             return;
         }
 
         var kids = Prepare(_root.Children);
         if (kids.Count == 0)
         {
-            DrawCenterText(dc, "无子项");
+            DrawCenterText(dc, T("Chart.Empty"));
             return;
         }
 
@@ -263,7 +264,7 @@ public sealed class TreemapView : FrameworkElement
 
     private void DrawTruncationHint(DrawingContext dc)
     {
-        var text = MakeText($"已超过 {_maxBlocks} 块，深层已折叠", 10, Brushes.White);
+        var text = MakeText(string.Format(T("Chart.Truncated"), _maxBlocks), 10, Brushes.White);
         var rect = new Rect(ActualWidth - text.Width - 16, ActualHeight - text.Height - 10, text.Width + 10, text.Height + 4);
         dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(170, 0, 0, 0)), null, rect, 4, 4);
         dc.DrawText(text, new Point(rect.X + 5, rect.Y + 2));
@@ -289,7 +290,7 @@ public sealed class TreemapView : FrameworkElement
 
         if (count > 0)
         {
-            kept.Add(new ScanNode($"{count:N0} 项小于 1 MB", string.Empty, NodeKind.File)
+            kept.Add(new ScanNode(string.Format(T("Chart.SmallFiles"), count), string.Empty, NodeKind.File)
             {
                 LogicalSize = sum,
                 IsAggregate = true,
@@ -306,7 +307,7 @@ public sealed class TreemapView : FrameworkElement
 
         var keep = list.Take(Math.Max(1, MaxBlocks - 1)).ToList();
         var tail = list.Skip(keep.Count).ToList();
-        keep.Add(new ScanNode($"其余 {tail.Count:N0} 项", string.Empty, NodeKind.File)
+        keep.Add(new ScanNode(string.Format(T("Chart.RestCount"), tail.Count), string.Empty, NodeKind.File)
         {
             LogicalSize = tail.Sum(t => Math.Max(1, t.LogicalSize)),
             IsAggregate = true,
@@ -426,6 +427,8 @@ public sealed class TreemapView : FrameworkElement
         var y = top < 0 ? rect.Y + Math.Max(1, (rect.Height - formatted.Height) / 2) : rect.Y + top;
         dc.DrawText(formatted, new Point(rect.X + left, y));
     }
+
+    private static string T(string key) => LocalizationService.Text(key, Loc.Instance.Language);
 
     private FormattedText MakeText(string text, double size, Brush brush, FontWeight? weight = null) => new(
         text,
