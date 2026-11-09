@@ -1,0 +1,97 @@
+<Window x:Class="DiskSpaceGuard.CleanupLedgerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:svc="clr-namespace:DiskSpaceGuard.Services"
+        Title="{Binding [Ledger.Title], Source={x:Static svc:Loc.Instance}}"
+        Width="1020" Height="640" MinWidth="820" MinHeight="500"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{StaticResource WindowBrush}" FontFamily="Microsoft YaHei UI" FontSize="13">
+  <Grid Margin="22">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <StackPanel>
+      <TextBlock Text="{Binding [Ledger.Title], Source={x:Static svc:Loc.Instance}}"
+                 FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+      <TextBlock Margin="0,6,0,0" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextWrapping="Wrap"
+                 Text="{Binding [Ledger.Desc], Source={x:Static svc:Loc.Instance}}"/>
+    </StackPanel>
+
+    <Grid Grid.Row="1" Margin="0,14,0,10">
+      <StackPanel Orientation="Horizontal">
+        <Button Content="{Binding [Common.Refresh], Source={x:Static svc:Loc.Instance}}" Click="Refresh_Click" Padding="14,7" Background="{StaticResource SoftBrush}"
+                Foreground="{StaticResource AccentBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
+        <Button Content="{Binding [Common.OpenFolder], Source={x:Static svc:Loc.Instance}}" Click="OpenFolder_Click" Margin="10,0,0,0" Padding="14,7"
+                Background="Transparent" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
+        <Button Content="{Binding [Common.ExportCsv], Source={x:Static svc:Loc.Instance}}" Click="Export_Click" Margin="10,0,0,0" Padding="14,7"
+                Background="Transparent" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
+        <Button x:Name="RestoreButton" Content="{Binding [Ledger.Restore], Source={x:Static svc:Loc.Instance}}"
+                Click="Restore_Click" Margin="10,0,0,0" Padding="14,7" IsEnabled="False"
+                Background="Transparent" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
+      </StackPanel>
+      <TextBlock x:Name="StatusText" HorizontalAlignment="Right" VerticalAlignment="Center"
+                 Foreground="{StaticResource SecondaryTextBrush}" FontSize="11.5"
+                 Text="{Binding [Ledger.Reading], Source={x:Static svc:Loc.Instance}}"/>
+    </Grid>
+
+    <Grid Grid.Row="2">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="400"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+
+      <Border Grid.Column="0" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+              CornerRadius="9" Margin="0,0,10,0">
+        <ListView x:Name="EntriesList" BorderThickness="0" Background="Transparent"
+                  SelectionMode="Single" SelectionChanged="EntriesList_SelectionChanged">
+          <ListView.View>
+            <GridView>
+              <GridViewColumn Header="{Binding [Ledger.Time], Source={x:Static svc:Loc.Instance}}" Width="145" DisplayMemberBinding="{Binding Time}"/>
+              <GridViewColumn Header="{Binding [Ledger.Mode], Source={x:Static svc:Loc.Instance}}" Width="70" DisplayMemberBinding="{Binding Mode}"/>
+              <GridViewColumn Header="{Binding [Ledger.Success], Source={x:Static svc:Loc.Instance}}" Width="55" DisplayMemberBinding="{Binding Success}"/>
+              <GridViewColumn Header="{Binding [Ledger.Problems], Source={x:Static svc:Loc.Instance}}" Width="100" DisplayMemberBinding="{Binding Problems}"/>
+            </GridView>
+          </ListView.View>
+        </ListView>
+      </Border>
+
+      <Border Grid.Column="1" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+
+          <StackPanel Grid.Row="0" Margin="14,12,14,8">
+            <TextBlock x:Name="EntryTitle" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+            <TextBlock x:Name="EntryMeta" Margin="0,5,0,0" Foreground="{StaticResource SecondaryTextBrush}" FontSize="11"
+                       TextWrapping="Wrap" Text=""/>
+          </StackPanel>
+
+          <ListView x:Name="ItemsList" Grid.Row="1" BorderThickness="0" Background="Transparent"
+                    Margin="8,0,8,8">
+            <ListView.View>
+              <GridView>
+                <GridViewColumn Header="{Binding [Ledger.ItemPath], Source={x:Static svc:Loc.Instance}}" Width="310" DisplayMemberBinding="{Binding Path}"/>
+                <GridViewColumn Header="{Binding [Ledger.ItemOutcome], Source={x:Static svc:Loc.Instance}}" Width="90" DisplayMemberBinding="{Binding Outcome}"/>
+                <GridViewColumn Header="{Binding [Ledger.ItemVerify], Source={x:Static svc:Loc.Instance}}" Width="90" DisplayMemberBinding="{Binding Verify}"/>
+                <GridViewColumn Header="{Binding [Ledger.ItemMessage], Source={x:Static svc:Loc.Instance}}" Width="220" DisplayMemberBinding="{Binding Message}"/>
+              </GridView>
+            </ListView.View>
+          </ListView>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <DockPanel Grid.Row="3" Margin="0,14,0,0" LastChildFill="False">
+      <TextBlock x:Name="FooterText" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" FontSize="10.5"
+                 FontFamily="Consolas" Text=""/>
+      <Button DockPanel.Dock="Right" Content="{Binding [Common.Close], Source={x:Static svc:Loc.Instance}}" Click="Close_Click" Padding="18,8"
+              Background="Transparent" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
+    </DockPanel>
+  </Grid>
+</Window>

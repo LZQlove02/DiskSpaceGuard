@@ -1,0 +1,77 @@
+<Window x:Class="DiskSpaceGuard.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:svc="clr-namespace:DiskSpaceGuard.Services"
+        Title="{Binding [Settings.Title], Source={x:Static svc:Loc.Instance}}"
+        Width="560" Height="700"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize" ShowInTaskbar="False"
+        Background="{StaticResource WindowBrush}" FontFamily="Microsoft YaHei UI" FontSize="13">
+  <Grid Margin="22">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <TextBlock Text="{Binding [Settings.ProtectTitle], Source={x:Static svc:Loc.Instance}}"
+               FontSize="17" FontWeight="SemiBold"/>
+    <TextBlock Grid.Row="1" Margin="0,6,0,14" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"
+               Text="{Binding [Settings.ProtectDesc], Source={x:Static svc:Loc.Instance}}"/>
+
+    <Border Grid.Row="2" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="8">
+      <ListBox x:Name="RootList" BorderThickness="0" Background="Transparent"/>
+    </Border>
+
+    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,12,0,0">
+      <Button Content="{Binding [Common.AddFolder], Source={x:Static svc:Loc.Instance}}" Click="Add_Click" Padding="14,7" Background="{StaticResource SoftBrush}" Foreground="{StaticResource AccentBrush}"
+              BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
+      <Button Content="{Binding [Common.RemoveSelected], Source={x:Static svc:Loc.Instance}}" Click="Remove_Click" Margin="10,0,0,0" Padding="14,7" Background="Transparent"
+              BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
+      <TextBlock x:Name="HintText" Margin="14,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12"/>
+    </StackPanel>
+
+    <Border Grid.Row="4" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1" CornerRadius="10" Padding="14,10" Margin="0,14,0,0">
+      <StackPanel>
+        <TextBlock Text="{Binding [Settings.Appearance], Source={x:Static svc:Loc.Instance}}"
+                   FontSize="13" FontWeight="SemiBold" Margin="0,0,0,8"/>
+        <CheckBox x:Name="TrayCheck" Content="{Binding [Settings.Tray], Source={x:Static svc:Loc.Instance}}"
+                  Margin="0,0,0,6"/>
+        <CheckBox x:Name="ThemeCheck" Content="{Binding [Settings.Theme], Source={x:Static svc:Loc.Instance}}"/>
+        <TextBlock Text="{Binding [Settings.ThemeNote], Source={x:Static svc:Loc.Instance}}"
+                   Foreground="{StaticResource SecondaryTextBrush}" FontSize="11" Margin="22,4,0,0"/>
+        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+          <TextBlock Text="{Binding [Settings.Language], Source={x:Static svc:Loc.Instance}}"
+                     VerticalAlignment="Center" Margin="0,0,10,0"/>
+          <ComboBox x:Name="LanguageCombo" Width="150" SelectionChanged="LanguageCombo_SelectionChanged">
+            <ComboBoxItem Content="中文" Tag="zh-CN"/>
+            <ComboBoxItem Content="English" Tag="en-US"/>
+          </ComboBox>
+          <TextBlock Text="{Binding [Settings.LanguageNote], Source={x:Static svc:Loc.Instance}}"
+                     VerticalAlignment="Center" Margin="10,0,0,0"
+                     Foreground="{StaticResource SecondaryTextBrush}" FontSize="11"/>
+        </StackPanel>
+
+        <TextBlock Text="{Binding [Settings.Apps], Source={x:Static svc:Loc.Instance}}"
+                   FontSize="13" FontWeight="SemiBold" Margin="0,14,0,8"/>
+        <CheckBox x:Name="ShowSystemCheck"
+                  Content="{Binding [Settings.ShowSystemComponents], Source={x:Static svc:Loc.Instance}}"/>
+        <TextBlock Text="{Binding [Settings.ShowSystemComponentsNote], Source={x:Static svc:Loc.Instance}}"
+                   Foreground="{StaticResource SecondaryTextBrush}" FontSize="11"
+                   TextWrapping="Wrap" Margin="22,4,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <DockPanel Grid.Row="5" Margin="0,16,0,0" LastChildFill="False">
+      <Button DockPanel.Dock="Right" Content="{Binding [Common.Save], Source={x:Static svc:Loc.Instance}}"
+              Click="Save_Click" Padding="22,8" Background="{StaticResource AccentBrush}"
+              Foreground="White" BorderThickness="0" Cursor="Hand"/>
+      <Button DockPanel.Dock="Right" Content="{Binding [Common.Cancel], Source={x:Static svc:Loc.Instance}}"
+              Click="Cancel_Click" Margin="0,0,10,0" Padding="18,8"
+              Background="Transparent" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Cursor="Hand"/>
+    </DockPanel>
+  </Grid>
+</Window>
