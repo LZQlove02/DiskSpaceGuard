@@ -3,71 +3,44 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ShutdownMode="OnMainWindowClose">
   <Application.Resources>
-    <!-- ══════════════════════════════════════════════════════════════
-         DSG Design System V2 · 2026-11-08
-         与画布「02 设计规范」及 DiskSpaceGuard-UI重构-原型.html 一致。
-         单一强调色；语义色仅用于状态，不做装饰。
-         本文件只替换画刷与字体资源，不改变任何控件行为或业务逻辑。
-         ══════════════════════════════════════════════════════════════ -->
+    <ResourceDictionary>
 
-    <!-- 主色 / 交互三态（白字在 #2C7A7B 上对比度 5.0:1，满足 WCAG AA） -->
-    <SolidColorBrush x:Key="AccentBrush" Color="#2C7A7B"/>
-    <SolidColorBrush x:Key="AccentHoverBrush" Color="#246668"/>
-    <SolidColorBrush x:Key="AccentPressBrush" Color="#1B4F51"/>
-    <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="MintBrush" Color="#5BCFC5"/>
-    <SolidColorBrush x:Key="MintSoftBrush" Color="#DFF4F1"/>
+      <!-- ══════════════════════════════════════════════════════════════
+           DSG Design System V2 · 2026-11-08
 
-    <!-- 表面与描边 -->
-    <SolidColorBrush x:Key="WindowBrush" Color="#FAFCFC"/>
-    <SolidColorBrush x:Key="CardBrush" Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="SubtleBrush" Color="#F5F9F9"/>
-    <SolidColorBrush x:Key="InputBrush" Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="SoftBrush" Color="#EFF5F4"/>
-    <SolidColorBrush x:Key="BorderBrush" Color="#E0EBEA"/>
-    <SolidColorBrush x:Key="BorderStrongBrush" Color="#C8D8D6"/>
+           ★ 颜色不写在这里。调色板是一份独立的 ResourceDictionary，
+             ThemeService.Apply() 通过替换这个合并项来切主题：
+               Themes/Light.xaml  ← 本文件预置的默认值（浅色唯一真源）
+               Themes/Dark.xaml   ← 暗色（旧蓝调，待重做，见 §7-2）
+             要让"同一个颜色只存在一处"，就必须让应用资源里没有色值副本。
 
-    <!-- 文字：只保留两级，均 ≥ WCAG AA 4.5:1。
-         正文 #0F1F2E 16.2:1（窗口底）/ 16.7:1（卡片底）；次要 #5C7480 4.6:1（侧栏）/ 4.9:1（卡片）。
-         第三级灰在 12px 下仅 3.1:1 达不到 AA，加深到达标后与次要色亮度只差 0.6%、肉眼不可分，故不设三级。 -->
-    <SolidColorBrush x:Key="PrimaryTextBrush" Color="#0F1F2E"/>
-    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#5C7480"/>
+           ★ 字体与样式与主题无关，留在本文件，不随调色板切换。
+           ══════════════════════════════════════════════════════════════ -->
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Themes/Light.xaml"/>
+      </ResourceDictionary.MergedDictionaries>
 
-    <!-- 侧栏：浅色表面 + 深青选中态，选中项必须用 NavSelectedTextBrush -->
-    <SolidColorBrush x:Key="NavBrush" Color="#F5F9F9"/>
-    <SolidColorBrush x:Key="NavSelectedBrush" Color="#DFF4F1"/>
-    <SolidColorBrush x:Key="NavTextBrush" Color="#5C7480"/>
-    <SolidColorBrush x:Key="NavSelectedTextBrush" Color="#1B4F51"/>
+      <!-- 字体：逗号为 fallback 链，未安装 Noto Sans SC / Geist Mono 时自动回退 -->
+      <FontFamily x:Key="UiFontFamily">Noto Sans SC, Microsoft YaHei UI</FontFamily>
+      <FontFamily x:Key="MonoFontFamily">Geist Mono, Consolas</FontFamily>
 
-    <!-- 语义状态：颜色与文字标签同时出现，不单独承载含义 -->
-    <SolidColorBrush x:Key="InfoBgBrush" Color="#EAF7F5"/>
-    <SolidColorBrush x:Key="SuccessBgBrush" Color="#EAF7F5"/>
-    <SolidColorBrush x:Key="SuccessTextBrush" Color="#1B4F51"/>
-    <SolidColorBrush x:Key="WarningBgBrush" Color="#FDF6E3"/>
-    <SolidColorBrush x:Key="WarningTextBrush" Color="#7A5406"/>
-    <SolidColorBrush x:Key="WarningBrush" Color="#F2C94C"/>
-    <SolidColorBrush x:Key="DangerBgBrush" Color="#FDECEC"/>
-    <SolidColorBrush x:Key="DangerTextBrush" Color="#C0392B"/>
-    <SolidColorBrush x:Key="DangerBrush" Color="#EB5757"/>
+      <!-- 行为设定保持原样，避免影响既有交互 -->
+      <Style TargetType="Button">
+        <Setter Property="Padding" Value="12,9"/>
+        <Setter Property="Margin" Value="0,0,0,8"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      </Style>
 
-    <!-- 字体：逗号为 fallback 链，未安装 Noto Sans SC / Geist Mono 时自动回退 -->
-    <FontFamily x:Key="UiFontFamily">Noto Sans SC, Microsoft YaHei UI</FontFamily>
-    <FontFamily x:Key="MonoFontFamily">Geist Mono, Consolas</FontFamily>
+      <!-- 进度条：WPF 默认用系统 Aero 绿 #06B025，与设计系统无关。
+           默认模板的 PART_Indicator 取 Foreground、轨道取 Background，故只需设值。
+           不自建模板，以免丢失不确定态动画。
+           这里用 DynamicResource：颜色来自上面的合并字典，静态引用会受声明顺序约束。 -->
+      <Style TargetType="ProgressBar">
+        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource SoftBrush}"/>
+      </Style>
 
-    <!-- 行为设定保持原样，避免影响既有交互 -->
-    <Style TargetType="Button">
-      <Setter Property="Padding" Value="12,9"/>
-      <Setter Property="Margin" Value="0,0,0,8"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="HorizontalContentAlignment" Value="Left"/>
-    </Style>
-
-    <!-- 进度条：WPF 默认用系统 Aero 绿 #06B025，与设计系统无关。
-         默认模板的 PART_Indicator 取 Foreground、轨道取 Background，故只需设值。
-         不自建模板，以免丢失不确定态动画。 -->
-    <Style TargetType="ProgressBar">
-      <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
-      <Setter Property="Background" Value="{StaticResource SoftBrush}"/>
-    </Style>
+    </ResourceDictionary>
   </Application.Resources>
 </Application>

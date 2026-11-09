@@ -4,7 +4,7 @@
         xmlns:svc="clr-namespace:DiskSpaceGuard.Services"
         Title="{Binding [Plan.Title], Source={x:Static svc:Loc.Instance}}"
         Width="720" Height="560" MinWidth="640" MinHeight="460"
-        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFontFamily}" Background="{StaticResource WindowBrush}" ShowInTaskbar="False">
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFontFamily}" Foreground="{DynamicResource PrimaryTextBrush}" Background="{DynamicResource WindowBrush}" ShowInTaskbar="False">
   <Border Padding="22">
     <Grid>
         <Grid.RowDefinitions>
@@ -18,11 +18,11 @@
 
       <StackPanel Grid.Row="0">
         <TextBlock Text="{Binding [Plan.Title], Source={x:Static svc:Loc.Instance}}"
-                   FontSize="20" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}"/>
-        <TextBlock x:Name="ModeText" Margin="0,6,0,0" Foreground="{StaticResource SecondaryTextBrush}" FontSize="11.5"/>
+                   FontSize="20" FontWeight="Bold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+        <TextBlock x:Name="ModeText" Margin="0,6,0,0" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11.5"/>
       </StackPanel>
 
-      <Border Grid.Row="1" Background="{StaticResource CardBrush}" CornerRadius="10" Padding="14" Margin="0,12,0,10">
+      <Border Grid.Row="1" Background="{DynamicResource CardBrush}" CornerRadius="10" Padding="14" Margin="0,12,0,10">
         <Grid>
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
@@ -31,25 +31,25 @@
             <ColumnDefinition Width="*"/>
           </Grid.ColumnDefinitions>
           <StackPanel Grid.Column="0">
-            <TextBlock Text="{Binding [Plan.Items], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="10.5"/>
-            <TextBlock x:Name="ItemsText" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+            <TextBlock Text="{Binding [Plan.Items], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="10.5"/>
+            <TextBlock x:Name="ItemsText" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
           </StackPanel>
           <StackPanel Grid.Column="1">
-            <TextBlock Text="{Binding [Plan.Estimated], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="10.5"/>
-            <TextBlock x:Name="BytesText" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"/>
+            <TextBlock Text="{Binding [Plan.Estimated], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="10.5"/>
+            <TextBlock x:Name="BytesText" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
           </StackPanel>
           <StackPanel Grid.Column="2">
-            <TextBlock Text="{Binding [Plan.Strong], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="10.5"/>
-            <TextBlock x:Name="StrongText" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource WarningTextBrush}"/>
+            <TextBlock Text="{Binding [Plan.Strong], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="10.5"/>
+            <TextBlock x:Name="StrongText" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource WarningTextBrush}"/>
           </StackPanel>
           <StackPanel Grid.Column="3">
-            <TextBlock Text="{Binding [Plan.Blocked], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="10.5"/>
-            <TextBlock x:Name="BlockedText" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource DangerTextBrush}"/>
+            <TextBlock Text="{Binding [Plan.Blocked], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="10.5"/>
+            <TextBlock x:Name="BlockedText" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource DangerTextBrush}"/>
           </StackPanel>
         </Grid>
       </Border>
 
-      <ListView x:Name="ItemsList" Grid.Row="2" BorderThickness="1" BorderBrush="{StaticResource BorderBrush}">
+      <ListView x:Name="ItemsList" Grid.Row="2" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}">
         <ListView.View>
           <GridView>
             <GridViewColumn Header="{Binding [Plan.Path], Source={x:Static svc:Loc.Instance}}" Width="430" DisplayMemberBinding="{Binding Path}"/>
@@ -60,31 +60,31 @@
       </ListView>
 
       <StackPanel Grid.Row="3" Margin="0,10,0,0">
-        <TextBlock x:Name="HashText" FontFamily="{StaticResource MonoFontFamily}" FontSize="10.5" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap"/>
-        <Border x:Name="RecycleNote" Background="{StaticResource SuccessBgBrush}" CornerRadius="7" Padding="10,8" Margin="0,8,0,0">
-          <TextBlock Foreground="{StaticResource SuccessTextBrush}" TextWrapping="Wrap" FontSize="11.5"
+        <TextBlock x:Name="HashText" FontFamily="{StaticResource MonoFontFamily}" FontSize="10.5" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+        <Border x:Name="RecycleNote" Background="{DynamicResource SuccessBgBrush}" CornerRadius="7" Padding="10,8" Margin="0,8,0,0">
+          <TextBlock Foreground="{DynamicResource SuccessTextBrush}" TextWrapping="Wrap" FontSize="11.5"
                      Text="{Binding [Plan.RecycleNote], Source={x:Static svc:Loc.Instance}}"/>
         </Border>
-        <Border x:Name="DangerNote" Background="{StaticResource WarningBgBrush}" CornerRadius="7" Padding="10,8" Margin="0,8,0,0"
+        <Border x:Name="DangerNote" Background="{DynamicResource WarningBgBrush}" CornerRadius="7" Padding="10,8" Margin="0,8,0,0"
                 Visibility="Collapsed">
-          <TextBlock Foreground="{StaticResource WarningTextBrush}" TextWrapping="Wrap" FontSize="11.5"
+          <TextBlock Foreground="{DynamicResource WarningTextBrush}" TextWrapping="Wrap" FontSize="11.5"
                      Text="{Binding [Plan.PermanentNote], Source={x:Static svc:Loc.Instance}}"/>
         </Border>
         <StackPanel x:Name="StrongPanel" Margin="0,10,0,0" Visibility="Collapsed">
-          <TextBlock x:Name="StrongHint" Foreground="{StaticResource WarningTextBrush}" FontSize="11.5" TextWrapping="Wrap"/>
+          <TextBlock x:Name="StrongHint" Foreground="{DynamicResource WarningTextBrush}" FontSize="11.5" TextWrapping="Wrap"/>
           <TextBox x:Name="StrongInput" Margin="0,6,0,0" Padding="8,6" FontSize="12"/>
         </StackPanel>
       </StackPanel>
 
       <!-- 执行期进度：条目逐项上报，可随时停止 -->
       <StackPanel x:Name="ExecPanel" Grid.Row="4" Margin="0,10,0,0" Visibility="Collapsed">
-        <TextBlock x:Name="ExecStatus" FontSize="11.5" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,0,6"/>
+        <TextBlock x:Name="ExecStatus" FontSize="11.5" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,0,6"/>
         <ProgressBar x:Name="ExecProgress" Height="8" Minimum="0" Maximum="1"/>
       </StackPanel>
 
       <Grid Grid.Row="5" Margin="0,14,0,0">
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-          <TextBlock Text="{Binding [Plan.Mode], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+          <TextBlock Text="{Binding [Plan.Mode], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
           <ComboBox x:Name="ModeCombo" Width="190" SelectionChanged="ModeCombo_SelectionChanged">
             <ComboBoxItem Content="{Binding [Plan.ModeRecycle], Source={x:Static svc:Loc.Instance}}" Tag="recycle" IsSelected="True"/>
             <ComboBoxItem Content="{Binding [Plan.ModePermanent], Source={x:Static svc:Loc.Instance}}" Tag="permanent"/>
@@ -93,7 +93,7 @@
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
           <Button x:Name="CancelButton" Content="{Binding [Common.Cancel], Source={x:Static svc:Loc.Instance}}" Click="Cancel_Click" Padding="16,7" Margin="0,0,8,0"/>
           <Button x:Name="ExecuteButton" Content="{Binding [Plan.Execute], Source={x:Static svc:Loc.Instance}}" Click="Execute_Click" Margin="0"
-                  Background="{StaticResource AccentBrush}" Foreground="{StaticResource OnAccentBrush}" BorderThickness="0" Padding="18,7"/>
+                  Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource OnAccentBrush}" BorderThickness="0" Padding="18,7"/>
         </StackPanel>
       </Grid>
     </Grid>

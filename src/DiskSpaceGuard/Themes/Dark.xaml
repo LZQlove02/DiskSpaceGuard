@@ -1,0 +1,60 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       DSG 深色调色板
+
+       ⚠️ 状态：**尚未按新设计系统重做**（见落地文档 §7-2）。
+          本文件目前是旧蓝色系（Accent #6D93FF / Nav #0B0E14 / NavSelected #1E2A44）
+          的等价迁移 —— 视觉与迁移前完全一致，不含任何新的配色决策。
+
+       本次只做了一件事：把原本硬编码在 ThemeService.cs 里的 21 个暗色值
+       搬到 XAML，并补齐此前**缺失**的 7 个（AccentHover / AccentPress / Mint /
+       MintSoft / BorderStrong / Warning / Danger）—— 这些键在暗色下原本会
+       残留浅色值，是"两个色源"造成的第二类不一致。
+
+       要重做深色主题时，只改本文件即可；但前置条件是处理 8 个窗口 XAML 里
+       约 39 个没有任何前景色来源的文本元素，否则会是黑字压暗底。
+       ══════════════════════════════════════════════════════════════════ -->
+
+  <!-- 主色 / 交互三态
+       暗色 Accent 是浅蓝 #6D93FF，白字只有 2.89:1，
+       OnAccentBrush 必须在暗色下翻成深墨 #0F1A1F（6.12:1）。 -->
+  <SolidColorBrush x:Key="AccentBrush" Color="#6D93FF"/>
+  <SolidColorBrush x:Key="AccentHoverBrush" Color="#87A6FF"/>
+  <SolidColorBrush x:Key="AccentPressBrush" Color="#5C82EE"/>
+  <SolidColorBrush x:Key="OnAccentBrush" Color="#0F1A1F"/>
+  <SolidColorBrush x:Key="MintBrush" Color="#7FE0D6"/>
+  <SolidColorBrush x:Key="MintSoftBrush" Color="#1B3A38"/>
+
+  <!-- 表面与描边 -->
+  <SolidColorBrush x:Key="WindowBrush" Color="#111318"/>
+  <SolidColorBrush x:Key="CardBrush" Color="#171A20"/>
+  <SolidColorBrush x:Key="SubtleBrush" Color="#1B1F27"/>
+  <SolidColorBrush x:Key="InputBrush" Color="#12151B"/>
+  <SolidColorBrush x:Key="SoftBrush" Color="#1D2740"/>
+  <SolidColorBrush x:Key="BorderBrush" Color="#282C35"/>
+  <SolidColorBrush x:Key="BorderStrongBrush" Color="#3A4150"/>
+
+  <!-- 文字：暗色下正文 #E6E8EE on #111318 ≈ 14.4:1，次要 #9AA1AE ≈ 6.7:1 -->
+  <SolidColorBrush x:Key="PrimaryTextBrush" Color="#E6E8EE"/>
+  <SolidColorBrush x:Key="SecondaryTextBrush" Color="#9AA1AE"/>
+
+  <!-- 侧栏 -->
+  <SolidColorBrush x:Key="NavBrush" Color="#0B0E14"/>
+  <SolidColorBrush x:Key="NavSelectedBrush" Color="#1E2A44"/>
+  <SolidColorBrush x:Key="NavTextBrush" Color="#C9CED6"/>
+  <SolidColorBrush x:Key="NavSelectedTextBrush" Color="#7FE0D6"/>
+
+  <!-- 语义状态 -->
+  <SolidColorBrush x:Key="InfoBgBrush" Color="#17233D"/>
+  <SolidColorBrush x:Key="SuccessBgBrush" Color="#10261C"/>
+  <SolidColorBrush x:Key="SuccessTextBrush" Color="#6EE7B7"/>
+  <SolidColorBrush x:Key="WarningBgBrush" Color="#2A2110"/>
+  <SolidColorBrush x:Key="WarningTextBrush" Color="#FCD34D"/>
+  <SolidColorBrush x:Key="WarningBrush" Color="#D9AE3E"/>
+  <SolidColorBrush x:Key="DangerBgBrush" Color="#2A1414"/>
+  <SolidColorBrush x:Key="DangerTextBrush" Color="#FCA5A5"/>
+  <SolidColorBrush x:Key="DangerBrush" Color="#E46767"/>
+
+</ResourceDictionary>

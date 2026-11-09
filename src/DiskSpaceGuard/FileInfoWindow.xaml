@@ -4,12 +4,12 @@
         xmlns:svc="clr-namespace:DiskSpaceGuard.Services"
         Title="{Binding [FileInfo.Title], Source={x:Static svc:Loc.Instance}}"
         Width="580" SizeToContent="Height" ResizeMode="NoResize"
-        WindowStartupLocation="CenterOwner" Background="{StaticResource WindowBrush}" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" Foreground="{DynamicResource PrimaryTextBrush}" Background="{DynamicResource WindowBrush}" ShowInTaskbar="False"
         FontFamily="{StaticResource UiFontFamily}">
   <Border Padding="22">
     <StackPanel>
-      <TextBlock x:Name="FileTitle" FontSize="20" FontWeight="Bold" TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}"/>
-      <TextBlock x:Name="FilePath" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Margin="0,6,0,14"/>
+      <TextBlock x:Name="FileTitle" FontSize="20" FontWeight="Bold" TextWrapping="Wrap" Foreground="{DynamicResource PrimaryTextBrush}"/>
+      <TextBlock x:Name="FilePath" FontSize="11" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" Margin="0,6,0,14"/>
 
       <Grid Margin="0,0,0,6">
         <Grid.ColumnDefinitions>
@@ -22,13 +22,13 @@
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <TextBlock Grid.Row="0" Text="{Binding [FileInfo.Size], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,20,4"/>
+        <TextBlock Grid.Row="0" Text="{Binding [FileInfo.Size], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,20,4"/>
         <TextBlock Grid.Row="0" Grid.Column="1" x:Name="SizeText" FontWeight="SemiBold" TextAlignment="Right" Margin="0,0,0,4"/>
-        <TextBlock Grid.Row="1" Text="{Binding [FileInfo.Modified], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,20,4"/>
+        <TextBlock Grid.Row="1" Text="{Binding [FileInfo.Modified], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,20,4"/>
         <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TimeText" TextAlignment="Right" Margin="0,0,0,4"/>
-        <TextBlock Grid.Row="2" Text="{Binding [FileInfo.Type], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,20,4"/>
+        <TextBlock Grid.Row="2" Text="{Binding [FileInfo.Type], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,20,4"/>
         <TextBlock Grid.Row="2" Grid.Column="1" x:Name="TypeText" TextAlignment="Right" Margin="0,0,0,4"/>
-        <TextBlock Grid.Row="3" Text="{Binding [FileInfo.Verdict], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,20,0"/>
+        <TextBlock Grid.Row="3" Text="{Binding [FileInfo.Verdict], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,20,0"/>
         <TextBlock Grid.Row="3" Grid.Column="1" x:Name="VerdictLabel" FontWeight="SemiBold" TextAlignment="Right"/>
       </Grid>
 
@@ -36,26 +36,26 @@
         <TextBlock x:Name="VerdictText" TextWrapping="Wrap" FontSize="12"/>
       </Border>
 
-      <TextBlock Text="{Binding [FileInfo.Knowledge], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="10.5" Margin="0,14,0,4"/>
-      <Border Background="{StaticResource SuccessBgBrush}" CornerRadius="8" Padding="10,8">
-        <TextBlock x:Name="KnowledgeText" Foreground="{StaticResource SuccessTextBrush}" TextWrapping="Wrap" FontSize="11.5"/>
+      <TextBlock Text="{Binding [FileInfo.Knowledge], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="10.5" Margin="0,14,0,4"/>
+      <Border Background="{DynamicResource SuccessBgBrush}" CornerRadius="8" Padding="10,8">
+        <TextBlock x:Name="KnowledgeText" Foreground="{DynamicResource SuccessTextBrush}" TextWrapping="Wrap" FontSize="11.5"/>
       </Border>
 
-      <TextBlock Text="{Binding [FileInfo.Query], Source={x:Static svc:Loc.Instance}}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="10.5" Margin="0,14,0,4"/>
-      <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="10,8">
-        <TextBlock x:Name="QueryText" FontFamily="{StaticResource MonoFontFamily}" FontSize="11" TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}"/>
+      <TextBlock Text="{Binding [FileInfo.Query], Source={x:Static svc:Loc.Instance}}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="10.5" Margin="0,14,0,4"/>
+      <Border Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="10,8">
+        <TextBlock x:Name="QueryText" FontFamily="{StaticResource MonoFontFamily}" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource PrimaryTextBrush}"/>
       </Border>
 
       <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
         <Button x:Name="BingButton" Content="{Binding [FileInfo.Bing], Source={x:Static svc:Loc.Instance}}" Click="Bing_Click"
-                Background="{StaticResource AccentBrush}" Foreground="{StaticResource OnAccentBrush}" BorderThickness="0" Padding="14,7" Margin="0,0,8,0"/>
+                Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource OnAccentBrush}" BorderThickness="0" Padding="14,7" Margin="0,0,8,0"/>
         <Button x:Name="BaiduButton" Content="{Binding [FileInfo.Baidu], Source={x:Static svc:Loc.Instance}}" Click="Baidu_Click"
                 Padding="14,7" Margin="0,0,8,0"/>
         <Button x:Name="CopyButton" Content="{Binding [FileInfo.Copy], Source={x:Static svc:Loc.Instance}}" Click="Copy_Click" Padding="14,7" Margin="0"/>
       </StackPanel>
 
-      <Border Background="{StaticResource WarningBgBrush}" CornerRadius="8" Padding="10,8" Margin="0,12,0,0">
-        <TextBlock Foreground="{StaticResource WarningTextBrush}" TextWrapping="Wrap" FontSize="11"
+      <Border Background="{DynamicResource WarningBgBrush}" CornerRadius="8" Padding="10,8" Margin="0,12,0,0">
+        <TextBlock Foreground="{DynamicResource WarningTextBrush}" TextWrapping="Wrap" FontSize="11"
                    Text="{Binding [FileInfo.Warning], Source={x:Static svc:Loc.Instance}}"/>
       </Border>
 
